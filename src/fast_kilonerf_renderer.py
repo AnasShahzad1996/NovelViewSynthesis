@@ -146,9 +146,14 @@ class FastKiloNeRFRenderer():
             compute_capability = torch.cuda.get_device_capability(query_indices.device)
             if compute_capability == (7, 5):
                 network_eval_num_threads = 512 # for some reason the compiler uses more than 96 registers for this CC, so we cannot launch 640 threads
+            elif compute_capability == (8, 6):
+                network_eval_num_threads = 64
             else:
                 network_eval_num_threads = 640
             version = 0
+
+            # print("Using", network_eval_num_threads, "threads")
+
             raw_outputs = kilonerf_cuda.network_eval_query_index(query_indices, self.multi_network.serialized_params, self.domain_mins, self.domain_maxs, starts, ends, origin,
                 self.c2w[:3, :3].contiguous(), self.multi_network.num_networks, self.multi_network.hidden_layer_size,
                 self.intrinsics.H, self.intrinsics.W, self.intrinsics.cx, self.intrinsics.cy, self.intrinsics.fx, self.intrinsics.fy, self.max_depth_index, self.min_distance, self.distance_between_samples,

@@ -690,7 +690,7 @@ def query_multi_network(multi_network, domain_mins, domain_maxs, points, directi
     PerfMonitor.add('reorder', ['reorder and backorder'])
     
     num_points_to_process = points_reordered.size(0) if points_reordered.ndim > 0 else 0
-    print("#points to process:", num_points_to_process, flush=True)
+    # print("#points to process:", num_points_to_process, flush=True)
     if num_points_to_process == 0:
         return torch.zeros(num_rays, num_samples, 4, dtype=torch.float, device=points_reordered.device)
             

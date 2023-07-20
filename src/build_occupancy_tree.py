@@ -155,9 +155,8 @@ def build_occupancy_tree(cfg, log_path):
     del all_densities
     occupancy_grid = occupancy_grid.view(cfg['resolution'] + [-1])
 
-    occupancy_grid = occupancy_grid.any(dim=3) # checks if any point in the voxel is above the threshold
+    occupancy_grid = occupancy_grid.any(dim=3).to(dev) # checks if any point in the voxel is above the threshold
 
-    
     Logger.write('{} out of {} voxels are occupied. {:.2f}%'.format(occupancy_grid.sum().item(), occupancy_grid.numel(), 100 * occupancy_grid.sum().item() / occupancy_grid.numel()))
     
     occupancy_filename = log_path + '/occupancy.pth'

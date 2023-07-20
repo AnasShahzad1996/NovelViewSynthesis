@@ -16,7 +16,7 @@ import math
 import pathlib
 from skimage.metrics import structural_similarity as calculate_ssim
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 from run_nerf_helpers import *
 
@@ -39,7 +39,7 @@ RESTART_EXIT_CODE = 3
 FINISHED_EXIT_CODE = 0
 
 # Changing working directory to script's directory so that script can be called from anywhere
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+# os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 
 # TODO: move class out of local_distill.py (which gets loaded as __main__)
@@ -235,21 +235,25 @@ def render_path(render_poses, intrinsics, chunk, render_kwargs, gt_imgs=None, sa
                 gt_img_numpy = gt_imgs[i].cpu().numpy()
             mse = img2mse(rgb, gt_img_pytorch)
             psnr = mse2psnr(mse)
-            ssim = calculate_ssim(rgb.cpu().numpy(), gt_img_numpy, data_range=gt_img_numpy.max() - gt_img_numpy.min(), multichannel=True)
-            lpips = LPIPS.calculate(rgb, gt_img_pytorch)
-            log_str += 'MSE: {:.6f}, PSNR: {:.3f}, SSIM: {:.3f}, LPIPS: {:.3f}, '.format(mse.item(), psnr.item(), ssim, lpips.item())
+            # ssim = calculate_ssim(rgb.cpu().numpy(), gt_img_numpy, data_range=gt_img_numpy.max() - gt_img_numpy.min(), multichannel=True)
+            ssim = 0.0
+            # lpips = LPIPS.calculate(rgb, gt_img_pytorch)
+            log_str += 'MSE: {:.6f}, PSNR: {:.3f}, SSIM: {:.3f}, LPIPS: {:.3f}, '.format(mse.item(), psnr.item(), ssim, 0.0)
             mse_list.append(mse.item())
             psnr_list.append(psnr.item())
             ssim_list.append(ssim)
-            lpips_list.append(lpips.item())
+            # lpips_list.append(lpips.item())
+            lpips_list.append(0.0)
         log_str += 'time: {:7.2f} ms'.format(elapsed_time * 1000)
         elapsed_time_list.append(elapsed_time)
 
         if savedir is not None:
             rgb8 = to8b(rgbs[-1])
             filename = os.path.join(savedir, '{:03d}.png'.format(i))
+            # filename2 = os.path.join(savedir, 'c_{:03d}.png'.format(i))
             imageio.imwrite(filename, rgb8)
-            
+            # imageio.imwrite(filename2, to8b(gt_imgs[i]))
+
         Logger.write(log_str)
     
     average_mse = average_psnr = average_ssim = average_lpips = 0
@@ -275,7 +279,6 @@ def render_path(render_poses, intrinsics, chunk, render_kwargs, gt_imgs=None, sa
     
 # only used during training: slower but with backprop support, no early ray termination, supports abitrarily spaced points 
 def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, background_color=None, pytest=False, no_color_sigmoid=False):
-
     def raw2alpha(raw, dists):
         return 1. - torch.exp(-F.relu(raw) * dists)
 
@@ -470,7 +473,7 @@ def pretrain_constant(multi_network, position_fourier_embedding, direction_fouri
     target = torch.tensor(cfg['constant_pretraining']['target'], device=device)
     return F.mse_loss(raw, target.unsqueeze(0).expand(batch_size, 4))
 
-def train(cfg, log_path, render_cfg_path):
+def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
     Logger.write('Using GPU: {}'.format(torch.cuda.get_device_name(0)))
     
     # "Render" config overwrites the config
@@ -508,6 +511,9 @@ def train(cfg, log_path, render_cfg_path):
         del cfg['occupancy_cfg_path']
         
     ConfigManager.init(cfg)
+
+    if resolution_overwrite:
+        cfg["fixed_resolution"] = resolution_overwrite
 
     # Load data
     background_color = None # white is default
@@ -551,7 +557,7 @@ def train(cfg, log_path, render_cfg_path):
         images, poses, intrinsics, near, far, background_color, render_poses, i_split = load_nsvf_dataset(cfg['dataset_dir'],  cfg['testskip'], test_traj_path)
         print('Loaded a NSVF-style dataset', images.shape, poses.shape, render_poses.shape, cfg['dataset_dir'])
         
-        i_train, i_val, i_test = i_split
+        i_train, i_val, i_test, i_test2 = i_split
         if i_test.size == 0:
             i_test = i_val
         
@@ -611,6 +617,8 @@ def train(cfg, log_path, render_cfg_path):
         i_render = i_val
     elif render_subset == 'test':
         i_render = i_test
+    elif render_subset == 'render':
+        i_render = i_test2
     if 'render_subset_indices' in cfg:
         i_render = i_render[cfg['render_subset_indices']]
     if render_subset != 'custom_path':
@@ -661,6 +669,8 @@ def train(cfg, log_path, render_cfg_path):
         }                                                            
         
     elif cfg['model_type'] == 'multi_network' or load_from_distilled:
+        Logger.write(f"Using multi-network (using load_from_distilled: {load_from_distilled})")
+
         # Required for fast training
         kilonerf_cuda.init_stream_pool(16)
         kilonerf_cuda.init_magma()
@@ -669,12 +679,15 @@ def train(cfg, log_path, render_cfg_path):
         direction_num_input_channels, direction_fourier_embedding = create_multi_network_fourier_embedding(1, cfg['num_frequencies_direction'])
         
         root_nodes = occupancy_grid = None
-        
+
         # End-to-end training
         if not load_from_distilled:
             res = cfg['fixed_resolution']
             network_resolution = torch.tensor(res, dtype=torch.long, device=torch.device('cpu'))
             num_networks = res[0] * res[1] * res[2]
+
+            Logger.write(f"Creating model with {num_networks} networks")
+
             model = multi_network = create_multi_network(num_networks, position_num_input_channels, direction_num_input_channels, 4,
                 'multimatmul_differentiable', cfg).to(device)
             
@@ -777,9 +790,11 @@ def train(cfg, log_path, render_cfg_path):
         if has_flag(cfg, 'render_debug_network_color_map'):
             #debug_network_color_map = torch.rand(multi_network.num_networks, 3)
             debug_network_color_map = torch.rand(res + [3])
-            for x, y, z in itertools.product(*[range(i) for i in res]):
-                color = [0.0, 1.0, 0.] if (x + ((y + z % 2) % 2)) % 2 else [0.0, 0.0, 1.0]
-                debug_network_color_map[x, y, z] = torch.tensor(color, dtype=torch.float)
+            # for x, y, z in itertools.product(*[range(i) for i in res]):
+            #     color = [0.0, 1.0, 0.] if (x + ((y + z % 2) % 2)) % 2 else [0.0, 0.0, 1.0]
+            #     # debug_network_color_map[x, y, z] = torch.tensor(color, dtype=torch.float)
+            #     debug_network_color_map[x, y, z] = color
+            # debug_network_color_map = torch.tensor(debug_network_color_map, dtype=torch.float32)
             debug_network_color_map = debug_network_color_map.view(-1, 3)
 
         additional_kwargs = {
@@ -816,6 +831,7 @@ def train(cfg, log_path, render_cfg_path):
 
     start = 0
     if load_from_checkpoint and not load_from_distilled:
+        print("load from state dict")
         optimizer.load_state_dict(cp['optimizer_state_dict'])
         model.load_state_dict(cp['model_state_dict'])
         start = cp['global_step'] + 1
@@ -837,7 +853,7 @@ def train(cfg, log_path, render_cfg_path):
         print('RENDER ONLY')
         model.eval()
         with torch.no_grad():
-            if render_subset != 'custom_path':
+            if render_subset != 'custom_path' and render_subset != 'render':
                 # load images for subset to be rendered (train/val/test)
                 images = images[i_render]
             else:

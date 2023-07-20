@@ -182,6 +182,8 @@ class PerfMonitor:
     events = []
     is_active = True
 
+    avg = {}
+
     @staticmethod
     def add(name, groups=[]):
         if PerfMonitor.is_active:
@@ -204,14 +206,17 @@ class PerfMonitor:
         max_length = max([len(name) for name, _, _ in PerfMonitor.events] + [len(group) for group in group_map])
         
         if write_detailed_log:
-            for event, elapsed_time in zip(PerfMonitor.events[1:], elapsed_times):
-                name = event[0]
-                extra_whitespace = ' ' * (max_length - len(name))
-                Logger.write('{}:{} {:7.2f} ms'.format(name, extra_whitespace, 1000 * (elapsed_time)))
-            Logger.write('')
+            # for event, elapsed_time in zip(PerfMonitor.events[1:], elapsed_times):
+            #     name = event[0]
+            #     extra_whitespace = ' ' * (max_length - len(name))
+            #     Logger.write('{}:{} {:7.2f} ms'.format(name, extra_whitespace, 1000 * (elapsed_time)))
+            # Logger.write('')
             for group in group_map:
+                if group not in PerfMonitor.avg:
+                    PerfMonitor.avg[group] = []
+                PerfMonitor.avg[group].append(group_map[group])
                 extra_whitespace = ' ' * (max_length - len(group))
-                Logger.write('{}:{} {:7.2f} ms'.format(group, extra_whitespace, 1000 * (group_map[group])))
+                Logger.write('{}:{} {:7.2f} ms (avg: {:7.2f} ms)'.format(group, extra_whitespace, 1000 * (group_map[group]), 1000 * sum(PerfMonitor.avg[group]) / len(PerfMonitor.avg[group])))
         
         # Reset        
         PerfMonitor.events = []
@@ -272,7 +277,7 @@ class ConfigManager:
     def get_global_domain_min_and_max(device=None):
         result = ConfigManager.global_domain_min, ConfigManager.global_domain_max
         if device:
-            result = [torch.tensor(x, dtype=torch.float, device=device) for x in result]
+            result = tuple(torch.tensor(x, dtype=torch.float, device=device) for x in result)
         return result
            
         

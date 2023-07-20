@@ -1,0 +1,14 @@
+dataset_dir: data/nsvf/BlendedMVS/Fountain
+dataset_type: nsvf
+pretrained_cfg_path: cfgs/paper/pretrain/BlendedMVS_Fountain_MultiRes.yaml
+pretrained_checkpoint_path: logs/paper/pretrain/BlendedMVS_Fountain_MultiRes/checkpoint_0030000.pth
+resolution:
+- 256
+- 256
+- 256
+subsample_resolution:
+- 4
+- 4
+- 4
+threshold: 10
+voxel_batch_size: 16384

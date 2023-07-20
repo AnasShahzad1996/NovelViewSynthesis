@@ -7,8 +7,8 @@ use_local_cub = True
 include_dirs = ['/usr/local/magma/include']
 if use_local_cub:
     dir_path = os.path.dirname(os.path.realpath(__file__))
-    cub_path = os.path.join(dir_path, 'cub-1.8.0')
-    include_dirs.append(cub_path)
+    # cub_path = os.path.join(dir_path, 'cub-1.8.0')
+    # include_dirs.append(cub_path)
 
 extension = CUDAExtension('kilonerf_cuda',
     ['fourier_features.cu', 'generate_inputs.cu', 'global_to_local.cu', 'pybind.cu',
@@ -24,5 +24,5 @@ setup(
     name='kilonerf_cuda',
     ext_modules=[extension],
     cmdclass={
-        'build_ext': BuildExtension
+        'build_ext': BuildExtension,
     })

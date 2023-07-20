@@ -68,7 +68,7 @@ def load_nsvf_dataset(path, testskip, test_traj_path=None):
     rgbs, poses, poses_unfiltered = [], [], []
     index = 0
     val_index, test_index = 0, 0
-    i_split = [[], [], []]
+    i_split = [[], [], [], []]
     for rgb_filename in sorted(os.listdir(rgb_base_path)):
         split_prefix = int(rgb_filename.split('_')[0])  # 0 = train, 1 = val, 2 = test
         # reduce test set size by only using every testskip-th image
@@ -82,7 +82,7 @@ def load_nsvf_dataset(path, testskip, test_traj_path=None):
         pose[:3, 1:3] = -pose[:3, 1:3] # TODO: why do we need to do this for NSVF style poses? probably they are assuming different coordinate system
         poses_unfiltered.append(pose[None, :])
         
-        if split_prefix == 0 or (split_prefix == 1 and val_index % testskip == 0) or (split_prefix == 2 and test_index % testskip == 0) :
+        if split_prefix == 0 or (split_prefix == 1 and val_index % testskip == 0) or (split_prefix == 2 and test_index % testskip == 0):
             i_split[split_prefix].append(index)
             rgb_path = os.path.join(rgb_base_path, rgb_filename)
             rgb = imageio.imread(rgb_path)
@@ -94,7 +94,12 @@ def load_nsvf_dataset(path, testskip, test_traj_path=None):
             val_index += 1
         if split_prefix == 2:
             test_index += 1
-        
+
+        if split_prefix == 3:
+            i_split[split_prefix].append(index)
+            poses.append(pose[None, :])
+            index += 1
+
     rgbs = np.concatenate(rgbs, 0)
     poses = np.concatenate(poses, 0)
     poses_unfiltered = np.concatenate(poses_unfiltered, 0)

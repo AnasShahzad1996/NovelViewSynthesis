@@ -1,0 +1,26 @@
+render:
+    fast_sampling: 0 # this activates a better implementation of empty space skipping and early ray termination
+    max_samples_per_ray: 32
+    transmittance_threshold: 0.01
+
+performance_monitoring: True
+render_only: True
+testskip: 1
+render_subset: test
+calc_metrics: 1
+
+use_multires: 0
+use_multifreq: 1
+
+#render_debug_network_color_map: 1
+#visualize_global_domain: 1
+
+#far: 10.0
+#render_factor: 32
+#use_rerun: 1
+#num_samples_per_ray: 128
+#chunk_size: 1
+
+#num_rays_per_batch: 4096
+
+#num_samples_per_ray: 128
