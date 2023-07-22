@@ -46,13 +46,32 @@ def get_points_in_occupied_space(points_flat, occupancy_grid, cfg):
 
     return point_in_occupied_space
 
-# TODO
+
+def calculate_network_indices(points_flat, res, num_networks):
+    fixed_resolution = torch.tensor([res, res, res], dtype=torch.long, device=device)
+    network_strides = torch.tensor([res * res, res, 1], dtype=torch.long, device=device)  # assumes row major ordering
+    global_domain_min, global_domain_max = ConfigManager.get_global_domain_min_and_max(device)
+    global_domain_size = global_domain_max - global_domain_min
+    voxel_size = global_domain_size / fixed_resolution
+
+    point_indices_3d = ((points_flat - global_domain_min) / voxel_size).to(network_strides)
+    point_indices = (point_indices_3d * network_strides).sum(dim=1)
+
+    del point_indices_3d
+
+    PerfMonitor.add('point indices', ['point_indices'])
+
+    proper_index = torch.logical_and(point_indices >= 0, point_indices < num_networks)
+
+    return point_indices, proper_index
+
+
 def query_multi_network(
         networks,
         points,
         directions,
-        occupancy_grid,
         cfg,
+        point_indices,
         distance_mask,
         resolution,
         freq_index,
@@ -72,43 +91,14 @@ def query_multi_network(
     domain_maxs = networks[freq_index][resolution]["domain_maxs"]
     debug_network_color_map = networks[freq_index][resolution]["debug_network_color_map"]
 
-    # res = cfg['fixed_resolution']
     num_networks = multi_network.num_networks
-    fixed_resolution = torch.tensor(res, dtype=torch.long, device=points_flat.device)
-    network_strides = torch.tensor([res[2] * res[1], res[2], 1], dtype=torch.long, device=points_flat.device) # assumes row major ordering
-    global_domain_min, global_domain_max = ConfigManager.get_global_domain_min_and_max(points_flat.device)
-    global_domain_size = global_domain_max - global_domain_min
-    voxel_size = global_domain_size / fixed_resolution
 
-    point_indices_3d = ((points_flat - global_domain_min) / voxel_size).to(network_strides)
-    point_indices = (point_indices_3d * network_strides).sum(dim=1)
-
-    del point_indices_3d
-
-    PerfMonitor.add('point indices', ['point_indices'])
-
-    # Filtering points outside global domain
-    active_samples_mask = distance_mask
-
-    if active_samples_mask is None:
-        epsilon = 0.001
-        active_samples_mask = torch.logical_and((points_flat > global_domain_min + epsilon).all(dim=1),
-                                                (points_flat < global_domain_max - epsilon).all(dim=1))
-
-        point_in_occupied_space = get_points_in_occupied_space(points_flat, occupancy_grid, cfg)
-
-        active_samples_mask = torch.logical_and(active_samples_mask, point_in_occupied_space)
-        del point_in_occupied_space
-    #
-    proper_index = torch.logical_and(point_indices >= 0,
-                                     point_indices < num_networks)  # probably this is not needed if we check for points_flat <= global_domain_max
-    active_samples_mask = torch.nonzero(torch.logical_and(active_samples_mask, proper_index), as_tuple=False).squeeze()
-    del proper_index
+    active_samples_mask = torch.nonzero(distance_mask, as_tuple=False).squeeze()
 
     filtered_point_indices = point_indices[active_samples_mask]
     del point_indices
 
-    PerfMonitor.add('filter', ['filter points'])
+    PerfMonitor.add('filter', ['filter points 2'])
 
     # Sort according to network
     filtered_point_indices, reorder_indices = torch.sort(filtered_point_indices)
@@ -126,6 +116,7 @@ def query_multi_network(
     # Reordering
     directions_flat = directions.unsqueeze(1).expand(points.size()).reshape(-1, 3)
     points_reordered = points_flat[active_samples_mask]
+
     directions_reordered = directions_flat[active_samples_mask]
     del points_flat, directions_flat
     # reorder so that points handled by the same network are packed together in the list of points
@@ -134,7 +125,7 @@ def query_multi_network(
     PerfMonitor.add('reorder', ['reorder and backorder'])
 
     num_points_to_process = points_reordered.size(0) if points_reordered.ndim > 0 else 0
-    # print("#points to process:", num_points_to_process, flush=True)
+    print("#points to process:", num_points_to_process)
     if num_points_to_process == 0:
         return torch.zeros(num_rays, num_samples, 4, dtype=torch.float, device=points_reordered.device)
 
@@ -153,10 +144,6 @@ def query_multi_network(
     embedded_dirs = direction_fourier_embedding(directions_reordered.unsqueeze(0),
                                                 implementation=fourier_embedding_implementation).squeeze(0)
 
-    # print(embedded_points.shape, embedded_points.sum(), embedded_points.std())
-    # print(embedded_dirs.shape, embedded_dirs.sum(), embedded_dirs.std())
-    # print(batch_size_per_network)
-
     del directions_reordered
     embedded_points_and_dirs = [embedded_points, embedded_dirs]
     del embedded_points
@@ -165,6 +152,7 @@ def query_multi_network(
 
     # Network query
     raw_outputs = multi_network(embedded_points_and_dirs, batch_size_per_network, None)
+    PerfMonitor.add('ray directions', ['query'])
 
     # print(raw_outputs.shape, raw_outputs.sum(), raw_outputs.std())
 
@@ -231,56 +219,32 @@ def render_rays(
 
     PerfMonitor.add('Point batching', ['batching'])
 
-    if cfg.get("use_multires", 0):
-        squared_distances = torch.sum((points_flat - c2w[:, -1]) ** 2, dim=1)
+    active_samples_mask = get_points_in_occupied_space(points_flat, occupancy_grid, cfg)
+    PerfMonitor.add('get_points_in_occupied_space', ['get_points_in_occupied_space'])
 
-        # ind_far = squared_distances >= 40
-        # ind_middle = squared_distances < 40
-        # ind_near = squared_distances < 30
+    res = cfg.get("nets_resolution", 16)
 
-        ind_far = squared_distances >= 20
-        ind_middle = squared_distances < 20
-        ind_near = squared_distances < 14
-        del squared_distances
+    point_indices, proper_index = calculate_network_indices(points_flat, res, networks[0][res]["model"].num_networks)
+    active_samples_mask = torch.logical_and(active_samples_mask, proper_index)
 
-        if cfg.get("use_rerun", 0):
-            cols = torch.zeros_like(points_flat, dtype=torch.uint8)
+    del proper_index
+    PerfMonitor.add('point indices', ['point_indices'])
 
-            cols[ind_far] = torch.tensor([38, 70, 83], dtype=torch.uint8)
-            cols[ind_middle] = torch.tensor([233, 196, 106], dtype=torch.uint8)
-            cols[ind_near] = torch.tensor([231, 111, 81], dtype=torch.uint8)
-
-            rr.log_points("world/points", points_flat.cpu().numpy(), colors=cols.cpu().numpy())
-
-        raw_far = query_multi_network(networks, pts, viewdirs, occupancy_grid, cfg, distance_mask=ind_far, resolution=4, freq_index=0)
-        raw_middle = query_multi_network(networks, pts, viewdirs, occupancy_grid, cfg, distance_mask=ind_middle, resolution=8, freq_index=0)
-        raw_near = query_multi_network(networks, pts, viewdirs, occupancy_grid, cfg, distance_mask=ind_near, resolution=16, freq_index=0)
-
-        raw = raw_far + raw_middle + raw_near
-    elif cfg.get("use_multifreq", 1):
+    if cfg.get("use_multifreq", 1):
         squared_distances = torch.sum((points_flat - c2w[:, -1]) ** 2, dim=1)
 
         ind_far = squared_distances >= 16
         ind_near = ~ind_far
 
+        del squared_distances
         PerfMonitor.add('distance mask', ['distance'])
-
-        # global_domain_min, global_domain_max = ConfigManager.get_global_domain_min_and_max(points_flat.device)
-        # epsilon = 0.001
-        # active_samples_mask = torch.logical_and((points_flat > global_domain_min + epsilon).all(dim=1),
-        #                                         (points_flat < global_domain_max - epsilon).all(dim=1))
-        #
-        # point_in_occupied_space = get_points_in_occupied_space(points_flat, occupancy_grid, cfg)
-        # active_samples_mask = torch.logical_and(active_samples_mask, point_in_occupied_space)
-
-        active_samples_mask = get_points_in_occupied_space(points_flat, occupancy_grid, cfg)
 
         active_samples_mask_far = torch.logical_and(active_samples_mask, ind_far)
         active_samples_mask_near = torch.logical_and(active_samples_mask, ind_near)
 
-        PerfMonitor.add('filter points', ['filter points'])
+        del active_samples_mask
 
-        del squared_distances
+        PerfMonitor.add('filter points', ['filter points'])
 
         if cfg.get("use_rerun", 0):
             cols = torch.zeros_like(points_flat, dtype=torch.uint8)
@@ -290,12 +254,21 @@ def render_rays(
 
             rr.log_points("world/points", points_flat.cpu().numpy(), colors=cols.cpu().numpy())
 
-        raw_far = query_multi_network(networks, pts, viewdirs, occupancy_grid, cfg, distance_mask=active_samples_mask_far, resolution=16, freq_index=1)
-        raw_near = query_multi_network(networks, pts, viewdirs, occupancy_grid, cfg, distance_mask=active_samples_mask_near, resolution=16, freq_index=0)
+        del ind_far
+        del ind_near
+
+        raw_far = query_multi_network(networks, pts, viewdirs, cfg, point_indices, distance_mask=active_samples_mask_far, resolution=res, freq_index=1)
+        raw_near = query_multi_network(networks, pts, viewdirs, cfg, point_indices, distance_mask=active_samples_mask_near, resolution=res, freq_index=0)
+
+        del active_samples_mask_far
+        del active_samples_mask_near
 
         raw = raw_far + raw_near
+
+        del raw_far
+        del raw_near
     else:
-        raw = query_multi_network(networks, pts, viewdirs, occupancy_grid, cfg, distance_mask=None, resolution=16, freq_index=0)
+        raw = query_multi_network(networks, pts, viewdirs, cfg, point_indices, distance_mask=active_samples_mask, resolution=res, freq_index=0)
 
     no_color_sigmoid = has_flag(cfg, 'no_color_sigmoid')
     rgb_map, disp_map, acc_map, weights, depth_map, alpha, transmittance = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, background_color,
@@ -368,6 +341,8 @@ def render(cfg, networks, intrinsics, occupancy_grid, chunk=1024*32, c2w=None, n
     near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
     rays = torch.cat([rays_o, rays_d, near, far], -1)
     rays = torch.cat([rays, viewdirs], -1)
+
+    PerfMonitor.add('misc', ['misc'])
 
     # Render and reshape
     all_ret = batchify_rays(cfg, networks, rays, occupancy_grid, chunk, background_color=background_color, c2w=c2w, **kwargs)
@@ -446,13 +421,14 @@ def render_path(networks, render_poses, intrinsics, chunk, occupancy_grid, rende
         imageio.imwrite(str(out_file), rgb8)
         # imageio.imwrite(str(out_file2), to8b(images[i]))
 
-        if cfg.get("calc_metrics", False) and (render_factor == 1 or render_factor == 0):
+        times_list.append(elapsed_time)
+
+        if cfg.get("calc_metrics", False) and (render_factor == 1 or render_factor == 0) and images is not None:
             gt_img_pytorch = torch.tensor(images[i], device=device)
             mse = img2mse(rgb, gt_img_pytorch)
             psnr = mse2psnr(mse)
 
             psnr_list.append(psnr.item())
-            times_list.append(elapsed_time)
 
             print(i,  mse.item(), psnr.item())
 
@@ -461,6 +437,7 @@ def render_path(networks, render_poses, intrinsics, chunk, occupancy_grid, rende
             break
     if psnr_list:
         print("Average psnr:", sum(psnr_list) / len(psnr_list))
+    if times_list:
         print("Average time:", sum(times_list) / len(times_list))
 
 
@@ -510,7 +487,10 @@ def load_networks(finetune_dir: Path, cfg: Dict[str, Any]):
 
     cp_multi = {}
 
-    freq_pairs = [(cfg['num_frequencies'], cfg['num_frequencies_direction']), (4, 2)]
+    if cfg.get("use_very_low", 0):
+        freq_pairs = [(cfg['num_frequencies'], cfg['num_frequencies_direction']), (2, 1)]
+    else:
+        freq_pairs = [(cfg['num_frequencies'], cfg['num_frequencies_direction']), (4, 2)]
 
     for freq_i, (num_freq, num_freq_dir) in enumerate(freq_pairs):
         position_num_input_channels, position_fourier_embedding = create_multi_network_fourier_embedding(1, num_freq)
@@ -518,8 +498,17 @@ def load_networks(finetune_dir: Path, cfg: Dict[str, Any]):
 
         cp_multi[freq_i] = {}
 
-        if freq_i == 1:
-            finetune_dir = finetune_dir.with_name(finetune_dir.name + "_Low")
+        if cfg.get("use_very_low", 0):
+            if freq_i == 1:
+                finetune_dir = finetune_dir.with_name(finetune_dir.name + "_Low2")
+                cfg['direction_layer_size'] = 16
+                cfg['hidden_layer_size'] = 16
+            else:
+                cfg['direction_layer_size'] = 32
+                cfg['hidden_layer_size'] = 32
+        else:
+            if freq_i == 1:
+                finetune_dir = finetune_dir.with_name(finetune_dir.name + "_Low")
 
         for res_dir in finetune_dir.iterdir():
             if not res_dir.is_dir():
@@ -535,7 +524,8 @@ def load_networks(finetune_dir: Path, cfg: Dict[str, Any]):
 
             res = int(res_dir.name)
 
-            if res not in {4, 8, 16}:
+            if res != cfg.get("nets_resolution", 16):
+            # if res not in {4, 8, 16}:
                 continue
 
             Logger.write(f'Loading {checkpoint_file} for resolution {res}')
@@ -660,7 +650,8 @@ def render_main(log_path: str, render_cfg_path: str, cfg: Dict[str, Any]):
     i_render = {"train": i_train, "val": i_val, "test": i_test, "render": i_test2}[render_subset]
 
     render_poses = np.array(poses[i_render])
-    images = images[i_render]
+
+    images = None if render_subset == "render" else images[i_render]
 
     render_kwargs_train = {
         'N_samples': cfg['num_samples_per_ray'],

@@ -459,22 +459,22 @@ class MultiNetwork(nn.Module):
             h = positions
             for i, l in enumerate(self.pts_linears):
                 h = self.pts_linears[i](h, batch_size_per_network)
-                PerfMonitor.add('pts_linears ' + str(i), ['network query', 'matmul'])
+                # PerfMonitor.add('pts_linears ' + str(i), ['network query', 'matmul', 'pts_linears'])
                 h = self.activation(h)
-                PerfMonitor.add('activation ' + str(i), ['network query', 'matmul'])
+                # PerfMonitor.add('activation ' + str(i), ['network query', 'matmul', 'activation'])
                 if i == self.refeed_position_index:
                     h = torch.cat([positions, h], -1)
-                    PerfMonitor.add('cat[positions, h]', ['network query', ])
+                    # PerfMonitor.add('cat[positions, h]', ['network query', 'cat_positions'])
             del positions
             if not self.use_view_independent_color:
                 alpha = self.alpha_linear(h, batch_size_per_network)
-                PerfMonitor.add('alpha_linear', ['network query', 'matmul'])
+                # PerfMonitor.add('alpha_linear', ['network query', 'matmul', 'alpha_linear'])
             feature = self.feature_linear(h, batch_size_per_network) # TODO: investigate why they don't use an activation function on top of feature layer!
             if self.view_dependent_dropout_probability > 0:
                 feature =  self.dropout_after_feature(feature)
             if self.use_view_independent_color:
                rgb_view_independent, alpha, feature = torch.split(feature, [3, 1, self.hidden_layer_size], dim=-1)
-            PerfMonitor.add('feature_linear', ['network query', 'matmul'])
+            # PerfMonitor.add('feature_linear', ['network query', 'matmul', 'feature_linear'])
             del h
             
             # Regularizing the view-independent color to be the mean of view-dependent colors sampled at some random directions
@@ -491,17 +491,17 @@ class MultiNetwork(nn.Module):
             
             # View-dependent part of the network:
             h = torch.cat([feature, directions], -1)
-            PerfMonitor.add('cat[feature, directions]', ['network query'])
+            # PerfMonitor.add('cat[feature, directions]', ['network query',])
             del feature
             del directions
             h = self.direction_layer(h, batch_size_per_network)
-            PerfMonitor.add('direction_linear', ['network query', 'matmul'])
+            # PerfMonitor.add('direction_linear', ['network query', 'matmul', 'direction_linear'])
             h = self.activation(h)
             if self.view_dependent_dropout_probability > 0:
                 h = self.dropout_after_direction_layer(h)
-            PerfMonitor.add('direction activation', ['network query'])
+            # PerfMonitor.add('direction activation', ['network query', 'activation'])
             rgb = self.rgb_linear(h, batch_size_per_network)
-            PerfMonitor.add('rgb_linear', ['network query', 'matmul'])
+            # PerfMonitor.add('rgb_linear', ['network query', 'matmul', 'rgb_linear'])
             del h
 
             if self.use_view_independent_color:
@@ -515,10 +515,10 @@ class MultiNetwork(nn.Module):
                     mean_regularization_term = torch.abs(mean_rgb - rgb_view_independent).mean()
                     del mean_rgb
                 del rgb_view_independent
-                PerfMonitor.add('rgb + rgb_view_independent', ['network query'])
+                # PerfMonitor.add('rgb + rgb_view_independent', ['network query', 'rgb_and_r'])
                 
             result = torch.cat([rgb, alpha], -1)
-            PerfMonitor.add('cat[rgb, alpha]', ['network query'])
+            # PerfMonitor.add('cat[rgb, alpha]', ['network query'])
             
             if random_directions is not None:
                 return result, mean_regularization_term
