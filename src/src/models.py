@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 from util.config import Config
 from collections import OrderedDict
-
+from kilonerf import KiloNeRF
 
 class BaseNet(nn.Module):
     def __init__(self, D, W, skip, n_in, n_out, config, net_idx):
@@ -346,5 +346,7 @@ class ModelSelection:
             return BaseNet(config.layers[i], config.layerWidth[i], config.skips[i], n_in, n_out, config, i).to(device)
         elif config.activation[i] == "nerf":
             return NeRF(config.layers[i], config.layerWidth[i], n_in=n_in, n_out=n_out, skips=[config.skips[i]], use_viewdirs=True, net_idx=i, config=config).to(device)
+        elif config.activation[i] == "kilonerf":
+            return KiloNeRF(1, config.inputChannels, config.inputChannelsViews, config.skips[0], config.layerWidth[0], config.layers[0], 4, True, config.layerWidth[0] // 2).to(device)
         else:
             raise Exception(f'Unknown activation {config.activation[i]}')

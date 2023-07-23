@@ -52,6 +52,10 @@ class Config(ABC):
         p.add_argument('-l', '--layers', default=[], type=int, action='append', help="number of layers")
         p.add_argument('-lw', '--layerWidth', default=[], type=int, action='append', help="width of each layer")
         p.add_argument('-sk', '--skips', default=[], type=str, action='append', help="skip information")
+        p.add_argument('-ic', '--inputChannels', default=3, type=int, action='append', help="input channels")
+        p.add_argument('-icv', '--inputChannelsViews', default=0, type=int, action='append', help="input channels views")
+        p.add_argument('-mrv', '--multiResViews', default=0, type=int, action='append', help="multi res views")
+        p.add_argument('-ie', '--iEmbed', default=0, type=int, action='append', help="iEmbed")
 
         # Training params
         p.add_argument('-d', '--device', default=0, type=int, help="Which cuda device to use")
