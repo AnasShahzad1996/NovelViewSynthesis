@@ -11,3 +11,9 @@ pillow
 pyrtools
 ptflops<=0.6.7
 tqdm
+pytorch
+torchvision
+scikit-image
+scipy
+pyyaml
+lpips
