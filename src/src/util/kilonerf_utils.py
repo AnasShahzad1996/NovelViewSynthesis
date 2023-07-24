@@ -6,7 +6,7 @@ from itertools import product
 import numpy as np
 import argparse
 import yaml
-from kilonerf_run_nerf_helpers import *
+from util.kilonerf_run_nerf_helpers import *
 import torch
 from tqdm import tqdm
 import lpips
