@@ -347,6 +347,7 @@ class KiloNeRF(nn.Module):
         view_dependent_dropout_probability=-1, use_view_independent_color=False):
         super(KiloNeRF, self).__init__()
         
+        self.name = 'KiloNeRF'
         self.num_networks = num_networks
         self.num_position_channels = num_position_channels
         self.num_direction_channels = num_direction_channels
