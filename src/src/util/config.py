@@ -48,7 +48,7 @@ class Config(ABC):
 
         # Network params
         p.add_argument('-act', '--activation', default=[], type=str, action='append',
-                       choices=["relu", "nerf"])
+                       choices=["relu", "nerf", "kilonerf"])
         p.add_argument('-l', '--layers', default=[], type=int, action='append', help="number of layers")
         p.add_argument('-lw', '--layerWidth', default=[], type=int, action='append', help="width of each layer")
         p.add_argument('-sk', '--skips', default=[], type=str, action='append', help="skip information")
