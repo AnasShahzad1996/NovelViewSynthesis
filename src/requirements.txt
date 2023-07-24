@@ -17,3 +17,5 @@ scikit-image
 scipy
 pyyaml
 lpips
+configargparse
+ptflops
