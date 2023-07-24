@@ -331,7 +331,8 @@ def main():
 
     if config.performEvaluation:
         from evaluate import evaluate
-        evaluations = ["complexity", "images", "flip", "psnr"]
+        # removed "complexity", because count flops error
+        evaluations = ["images", "flip", "psnr"]
 
         evaluate(train_config, None, evaluations)
 
