@@ -576,6 +576,83 @@ class KiloNeRF(nn.Module):
         single_network_layers += [output_layer]
         return  nn.Sequential(*single_network_layers)
     
+    def save_weights(self, path, name_suffix="", optimizer=None):
+        torch.save(self.state_dict(), f"{path}{self.name}_{name_suffix}.weights")
+        if optimizer is not None:
+            torch.save(optimizer.state_dict(), f"{path}{self.name}_{name_suffix}.optimizer")
+
+    def delete_saved_weights(self, path, optimizer=None):
+        ckpts = [os.path.join(path, f) for f in sorted(os.listdir(os.path.join(path))) if
+                    '.weights' in f and self.name in f and '_opt.weights' not in f]
+        # keep the last 10 files just in case something happened during training
+        for file in ckpts[:-10]:
+            # and also keep the weights every 50k iterations
+            epoch = int(file.split('.weights')[0].split('_')[-1])
+            if epoch % 50000 == 0 and epoch > 0:
+                continue
+            os.remove(file)
+            if optimizer is not None:
+                os.remove(f"{file.split('.weights')[0]}.optimizer")
+
+    def load_weights(self, path, device):
+        print('Reloading Checkpoint from', path)
+        model = torch.load(path, map_location=device)
+        # no idea why, but sometimes torch.load returns an ordered_dict...
+        if type(model) == type(OrderedDict()):
+            self.load_state_dict(model)
+        else:
+            self.load_state_dict(model.state_dict())
+
+    def load_optimizer(self, path, optimizer, device):
+        if os.path.exists(path):
+            print(f"Reloading optimizer checkpoint from {path}")
+            optimizer_state = torch.load(path, map_location=device)
+            optimizer.load_state_dict(optimizer_state)
+
+    def load_specific_weights(self, path, checkpoint_name, optimizer=None, device=0):
+        ckpts = [os.path.join(path, f) for f in sorted(os.listdir(os.path.join(path))) if
+                    checkpoint_name in f and self.name in f]
+        if len(ckpts) == 0:
+            print("no Checkpoints found")
+            return 0
+
+        ckpt_path = ckpts[-1]
+
+        self.load_weights(ckpt_path, device)
+
+        if optimizer is not None:
+            optim_path = f"{ckpt_path.split('.weights')[0]}.optimizer"
+            self.load_optimizer(optim_path, optimizer, device)
+        return 1
+
+    def load_latest_weights(self, path, optimizer=None, device=0, config=None):
+        ckpts = [os.path.join(path, f) for f in sorted(os.listdir(os.path.join(path))) if
+                    '.weights' in f and self.name in f and not '_opt.weights' in f]
+        if len(ckpts) == 0:
+            print("no Checkpoints found")
+            if config and config.preTrained and len(config.preTrained) > self.net_idx and config.preTrained[
+                self.net_idx].lower() != "none":
+                wpath = os.path.join(config.preTrained[self.net_idx], f"{self.name}.weights")
+                if os.path.exists(wpath):
+                    print("loading pretrained weights")
+                    self.load_weights(wpath, device)
+                else:
+                    print(f"WARNING pretrained weights not found: {wpath}")
+                opath = wpath = os.path.join(config.preTrained[self.net_idx], f"{self.name}.optimizer")
+                if optimizer is not None and os.path.exists(opath):
+                    self.load_optimizer(opath, optimizer, device)
+            return 0
+        ckpt_path = ckpts[-1]
+        epoch = int(ckpt_path.split('.weights')[0].split('_')[-1])
+
+        self.load_weights(ckpt_path, device)
+
+        if optimizer is not None:
+            optim_path = f"{ckpt_path.split('.weights')[0]}.optimizer"
+            self.load_optimizer(optim_path, optimizer, device)
+
+        return epoch
+    
 # semi-fast querying, differentiable, supports abitrary ray batches as input
 def query_multi_network(multi_network, domain_mins, domain_maxs, points, directions,
     position_fourier_embedding, direction_fourier_embedding, occupancy_grid, debug_network_color_map, use_network_jittering, random_directions, cfg):
@@ -804,80 +881,3 @@ def build_multi_network_from_single_networks(single_networks, transpose_weight =
             multi_shared_linears[layer_index].bias.data = new_bias
                 
     return multi_network
-
-def save_weights(self, path, name_suffix="", optimizer=None):
-        torch.save(self.state_dict(), f"{path}{self.name}_{name_suffix}.weights")
-        if optimizer is not None:
-            torch.save(optimizer.state_dict(), f"{path}{self.name}_{name_suffix}.optimizer")
-
-def delete_saved_weights(self, path, optimizer=None):
-    ckpts = [os.path.join(path, f) for f in sorted(os.listdir(os.path.join(path))) if
-                '.weights' in f and self.name in f and '_opt.weights' not in f]
-    # keep the last 10 files just in case something happened during training
-    for file in ckpts[:-10]:
-        # and also keep the weights every 50k iterations
-        epoch = int(file.split('.weights')[0].split('_')[-1])
-        if epoch % 50000 == 0 and epoch > 0:
-            continue
-        os.remove(file)
-        if optimizer is not None:
-            os.remove(f"{file.split('.weights')[0]}.optimizer")
-
-def load_weights(self, path, device):
-    print('Reloading Checkpoint from', path)
-    model = torch.load(path, map_location=device)
-    # no idea why, but sometimes torch.load returns an ordered_dict...
-    if type(model) == type(OrderedDict()):
-        self.load_state_dict(model)
-    else:
-        self.load_state_dict(model.state_dict())
-
-def load_optimizer(self, path, optimizer, device):
-    if os.path.exists(path):
-        print(f"Reloading optimizer checkpoint from {path}")
-        optimizer_state = torch.load(path, map_location=device)
-        optimizer.load_state_dict(optimizer_state)
-
-def load_specific_weights(self, path, checkpoint_name, optimizer=None, device=0):
-    ckpts = [os.path.join(path, f) for f in sorted(os.listdir(os.path.join(path))) if
-                checkpoint_name in f and self.name in f]
-    if len(ckpts) == 0:
-        print("no Checkpoints found")
-        return 0
-
-    ckpt_path = ckpts[-1]
-
-    self.load_weights(ckpt_path, device)
-
-    if optimizer is not None:
-        optim_path = f"{ckpt_path.split('.weights')[0]}.optimizer"
-        self.load_optimizer(optim_path, optimizer, device)
-    return 1
-
-def load_latest_weights(self, path, optimizer=None, device=0, config=None):
-    ckpts = [os.path.join(path, f) for f in sorted(os.listdir(os.path.join(path))) if
-                '.weights' in f and self.name in f and not '_opt.weights' in f]
-    if len(ckpts) == 0:
-        print("no Checkpoints found")
-        if config and config.preTrained and len(config.preTrained) > self.net_idx and config.preTrained[
-            self.net_idx].lower() != "none":
-            wpath = os.path.join(config.preTrained[self.net_idx], f"{self.name}.weights")
-            if os.path.exists(wpath):
-                print("loading pretrained weights")
-                self.load_weights(wpath, device)
-            else:
-                print(f"WARNING pretrained weights not found: {wpath}")
-            opath = wpath = os.path.join(config.preTrained[self.net_idx], f"{self.name}.optimizer")
-            if optimizer is not None and os.path.exists(opath):
-                self.load_optimizer(opath, optimizer, device)
-        return 0
-    ckpt_path = ckpts[-1]
-    epoch = int(ckpt_path.split('.weights')[0].split('_')[-1])
-
-    self.load_weights(ckpt_path, device)
-
-    if optimizer is not None:
-        optim_path = f"{ckpt_path.split('.weights')[0]}.optimizer"
-        self.load_optimizer(optim_path, optimizer, device)
-
-    return epoch
