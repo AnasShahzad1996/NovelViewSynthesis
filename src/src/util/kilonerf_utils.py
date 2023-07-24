@@ -6,7 +6,7 @@ from itertools import product
 import numpy as np
 import argparse
 import yaml
-import kilonerf_run_nerf_helpers as run_nerf_helpers
+from kilonerf_run_nerf_helpers import *
 import torch
 from tqdm import tqdm
 import lpips
@@ -33,25 +33,25 @@ def load_pretrained_nerf_model(dev, cfg):
     pretrained_nerf = pretrained_nerf.to(dev)
     checkpoint = torch.load(cfg['pretrained_checkpoint_path'])
     pretrained_nerf.load_state_dict(checkpoint['model_state_dict'])
-    pretrained_nerf = run_nerf_helpers.ChainEmbeddingAndModel(pretrained_nerf, embed_fn, embeddirs_fn) # pos. encoding
+    pretrained_nerf = ChainEmbeddingAndModel(pretrained_nerf, embed_fn, embeddirs_fn) # pos. encoding
     return pretrained_nerf
 
 def create_nerf(cfg):
-    embed_fn, input_ch = run_nerf_helpers.get_embedder(cfg['num_frequencies'], 0)
-    embeddirs_fn, input_ch_views = run_nerf_helpers.get_embedder(cfg['num_frequencies_direction'], 0)
+    embed_fn, input_ch = get_embedder(cfg['num_frequencies'], 0)
+    embeddirs_fn, input_ch_views = get_embedder(cfg['num_frequencies_direction'], 0)
     output_ch = 4
     skips = [cfg['refeed_position_index']]
-    model = run_nerf_helpers.NeRF(D=cfg['num_hidden_layers'], W=cfg['hidden_layer_size'],
+    model = NeRF(D=cfg['num_hidden_layers'], W=cfg['hidden_layer_size'],
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
                  input_ch_views=input_ch_views, use_viewdirs=True,
                  direction_layer_size=cfg['direction_layer_size'], use_initialization_fix=cfg['use_initialization_fix'])
     
     if cfg['num_importance_samples_per_ray'] > 0:
-        model_fine = run_nerf_helpers.NeRF(D=cfg['num_hidden_layers'], W=cfg['hidden_layer_size'],
+        model_fine = NeRF(D=cfg['num_hidden_layers'], W=cfg['hidden_layer_size'],
                           input_ch=input_ch, output_ch=output_ch, skips=skips,
                           input_ch_views=input_ch_views, use_viewdirs=True,
                           direction_layer_size=cfg['direction_layer_size'], use_initialization_fix=cfg['use_initialization_fix'])
-        model = run_nerf_helpers.CoarseAndFine(model, model_fine)
+        model = CoarseAndFine(model, model_fine)
     
     return model, embed_fn, embeddirs_fn    
     
