@@ -19,7 +19,7 @@ from losses import get_loss_by_name
 from typing import List
 from importlib import import_module
 from kilonerf import KiloNeRF
-import architectures
+from util.kilonerf_run_nerf_helpers import *
 
 class TrainConfig:
     def __init__(self):
@@ -279,10 +279,10 @@ class TrainConfig:
                 i_embed = 0
                 use_viewdirs = True
                 
-                embed_fn, input_ch = architectures.get_embedder(multires, i_embed)
+                embed_fn, input_ch = get_embedder(multires, i_embed)
                 embeddirs_fn = None
                 if use_viewdirs:
-                    embeddirs_fn, input_ch_views = architectures.get_embedder(multires_views, i_embed)
+                    embeddirs_fn, input_ch_views = get_embedder(multires_views, i_embed)
                 
                 batch_size = 8
                 positions = torch.rand(batch_size, 3).to(self.device)
