@@ -79,8 +79,8 @@ class KiloNeRFSimple(nn.Module):
             if i in self.skips:
                 h = torch.cat([input_pts, h], -1)
 
-        for i, l in enumerate(self.pts_linears_2):
-            h = self.pts_linears_2[i](h)
+        for i, l in enumerate(self.pts_linears_shared2):
+            h = self.pts_linears_shared2[i](h)
             h = F.relu(h)
             if i + len(self.pts_linears_shared1) in self.skips:
                 h = torch.cat([input_pts, h], -1)
