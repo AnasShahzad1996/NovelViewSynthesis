@@ -18,7 +18,8 @@ from util.helper import config_to_name
 from losses import get_loss_by_name
 from typing import List
 from importlib import import_module
-
+from kilonerf import KiloNeRF
+import architectures
 
 class TrainConfig:
     def __init__(self):
@@ -269,6 +270,29 @@ class TrainConfig:
             # We reshape this to [-1, N_feat] to enable splitting it into chunks to save memory
             inference_dict = self.f_in[i].batch(batch_input, prev_outs=inference_dicts, **kwargs)
             model_input = inference_dict[FeatureSetKeyConstants.input_feature_batch]
+
+            # TODO maybe find an alternative to this
+            if isinstance(KiloNeRF, self.models[i]):
+                # TODO extract from config
+                multires = 10
+                multires_views = 4
+                i_embed = 0
+                use_viewdirs = True
+                
+                embed_fn, input_ch = architectures.get_embedder(multires, i_embed)
+                embeddirs_fn = None
+                if use_viewdirs:
+                    embeddirs_fn, input_ch_views = architectures.get_embedder(multires_views, i_embed)
+                
+                batch_size = 8
+                positions = torch.rand(batch_size, 3).to(self.device)
+                directions = torch.rand(batch_size, 3).to(self.device)
+                
+                embedded_positions = embed_fn(positions)
+                embedded_directions = embeddirs_fn(directions)
+                points_and_dirs = torch.cat([embedded_positions, embedded_directions], -1)
+                model_input = points_and_dirs.unsqueeze(0)
+
             if gradient:
                 inference_dict[FeatureSetKeyConstants.network_output] = self.models[i](model_input)
             else:

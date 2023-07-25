@@ -2,7 +2,6 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import math
-# TODO install kilonerf_cuda
 import kilonerf_cuda
 from torch.distributions.bernoulli import Bernoulli
 from util.kilonerf_utils import *
