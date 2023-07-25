@@ -12,8 +12,8 @@ from kilonerf import KiloNeRF
 class KiloNeRFSimple(nn.Module):
     def __init__(self, D=8, W=256, n_in=None, n_out=4, skips=[4], use_viewdirs=False, net_idx=None, config=None):
         """
+        extend nerf to use 2 shared MLPs for processing points and view directions
         """
-        # TODO extend this to use 2 MLPs instead of only one
 
         super(KiloNeRFSimple, self).__init__()
         self.net_idx = net_idx
@@ -39,25 +39,18 @@ class KiloNeRFSimple(nn.Module):
 
         self.use_viewdirs = use_viewdirs
 
-        self.pts_linears = nn.ModuleList(
-            [nn.Linear(self.input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + self.input_ch, W) for i in
-                                        range(D - 1)])
-        
-        # Second MLP for processing points in the scene
-        self.pts_linears_2 = nn.ModuleList(
+        # First shared MLP for processing points
+        self.pts_linears_shared1 = nn.ModuleList(
+            [nn.Linear(self.input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + self.input_ch, W) for i in range(D // 2 - 1)]
+        )
+
+        # Second shared MLP for processing points
+        self.pts_linears_shared2 = nn.ModuleList(
             [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + self.input_ch, W) for i in range(D // 2 - 1, D - 1)]
         )
 
-
-        ### Implementation according to the official code release (https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L104-L105)
+        # First shared MLP for processing view directions
         self.views_linears = nn.ModuleList([nn.Linear(self.input_ch_views + W, W // 2)])
-
-        self.views_linears_2 = nn.ModuleList([nn.Linear(self.input_ch_views + W, W // 2)])
-
-
-        ### Implementation according to the paper
-        # self.views_linears = nn.ModuleList(
-        #     [nn.Linear(input_ch_views + W, W//2)] + [nn.Linear(W//2, W//2) for i in range(D//2)])
 
         if use_viewdirs:
             self.feature_linear = nn.Linear(W, W)
@@ -66,16 +59,13 @@ class KiloNeRFSimple(nn.Module):
         else:
             self.output_linear = nn.Linear(W, self.output_ch)
 
-        for i, l in enumerate(self.pts_linears):
+        for i, l in enumerate(self.pts_linears_shared1):
             nn.init.kaiming_normal_(l.weight)
         
-        for i, l in enumerate(self.pts_linears_2):
+        for i, l in enumerate(self.pts_linears_shared2):
             nn.init.kaiming_normal_(l.weight)
 
         for i, l in enumerate(self.views_linears):
-            nn.init.kaiming_normal_(l.weight)
-
-        for i, l in enumerate(self.views_linears_2):
             nn.init.kaiming_normal_(l.weight)
 
         # self.init_weights()
@@ -83,8 +73,8 @@ class KiloNeRFSimple(nn.Module):
     def forward(self, x):
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)
         h = input_pts
-        for i, l in enumerate(self.pts_linears):
-            h = self.pts_linears[i](h)
+        for i, l in enumerate(self.pts_linears_shared1):
+            h = self.pts_linears_shared1[i](h)
             h = F.relu(h)
             if i in self.skips:
                 h = torch.cat([input_pts, h], -1)
@@ -92,7 +82,7 @@ class KiloNeRFSimple(nn.Module):
         for i, l in enumerate(self.pts_linears_2):
             h = self.pts_linears_2[i](h)
             h = F.relu(h)
-            if i in self.skips:
+            if i + len(self.pts_linears_shared1) in self.skips:
                 h = torch.cat([input_pts, h], -1)
 
         if self.use_viewdirs:
@@ -104,10 +94,6 @@ class KiloNeRFSimple(nn.Module):
                 h = self.views_linears[i](h)
                 h = F.relu(h)
             
-            for i, l in enumerate(self.views_linears_2):
-                h = self.views_linears_2[i](h)
-                h = F.relu(h)
-
             rgb = self.rgb_linear(h)
             outputs = torch.cat([rgb, alpha], -1)
         else:
