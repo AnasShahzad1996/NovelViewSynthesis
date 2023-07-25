@@ -272,7 +272,7 @@ class TrainConfig:
             model_input = inference_dict[FeatureSetKeyConstants.input_feature_batch]
 
             # TODO maybe find an alternative to this
-            if isinstance(KiloNeRF, self.models[i]):
+            if isinstance(self.models[i], KiloNeRF):
                 # TODO extract from config
                 multires = 10
                 multires_views = 4
