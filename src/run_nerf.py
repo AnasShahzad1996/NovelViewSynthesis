@@ -34,6 +34,7 @@ from utils import ConfigManager, PerfMonitor, parse_args_and_init_logger, Logger
 from von_mises import sample_von_mises_3d
 
 device = torch.device("cuda")
+device_cpu = torch.device("cpu")
 DEBUG = False
 RESTART_EXIT_CODE = 3
 FINISHED_EXIT_CODE = 0
@@ -625,7 +626,7 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
         render_poses = np.array(poses[i_render]) 
             
     # Checkpoint loading
-    checkpoint_filenames = [f for f in os.listdir(log_path) if 'checkpoint' in f]
+    checkpoint_filenames = [f for f in os.listdir(log_path) if 'checkpoint' in f and 'best' not in f]
     load_from_checkpoint = len(checkpoint_filenames) > 0
     load_from_distilled = False
     if load_from_checkpoint:
@@ -830,11 +831,13 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
         optimizer = torch.optim.SGD(params=model.parameters(), lr=cfg['initial_learning_rate']) # no momentum
 
     start = 0
+    max_psnr = 0
     if load_from_checkpoint and not load_from_distilled:
         print("load from state dict")
         optimizer.load_state_dict(cp['optimizer_state_dict'])
         model.load_state_dict(cp['model_state_dict'])
         start = cp['global_step'] + 1
+        max_psnr = cp.get('max_psnr', 0)
     global_step = start
     
     use_fused_network_eval_kernel = 'render' in cfg and has_flag(cfg['render'], 'fast_sampling')
@@ -895,8 +898,13 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
         i_batch = 0
 
     # Move training data to GPU
-    images = torch.Tensor(images).to(device)
-    poses = torch.Tensor(poses).to(device)
+
+    gpu_slit = cfg.get('gpu_training_split', len(i_train) + 1)
+    images_gpu = torch.tensor(images[:gpu_slit, ], dtype=torch.float32, device=device)
+    images_cpu = torch.tensor(images[gpu_slit:, ], dtype=torch.float32, device=device_cpu)
+    del images
+    # images = torch.tensor(images, dtype=torch.float32, device=device_cpu)
+    poses = torch.Tensor(poses).to(device_cpu)
     if use_batching:
         rays_rgb = torch.Tensor(rays_rgb).to(device)
 
@@ -939,11 +947,15 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
         else:
             # Random from one image
             img_i = np.random.choice(i_train)
-            target = images[img_i]
+
+            if img_i < gpu_slit:
+                target = images_gpu[img_i]
+            else:
+                target = images_cpu[img_i-gpu_slit]
             pose = poses[img_i, :3,:4]
 
             if N_rand is not None:
-                rays_o, rays_d = get_rays(intrinsics, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
+                rays_o, rays_d = get_rays(intrinsics, torch.Tensor(pose).to(device))  # (H, W, 3), (H, W, 3)
 
                 if i < cfg['precrop_iterations']:
                     dH = int(intrinsics.H//2 * cfg['precrop_fraction'])
@@ -958,14 +970,17 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
                 else:
                     coords = torch.stack(torch.meshgrid(torch.linspace(0, intrinsics.H-1, intrinsics.H), torch.linspace(0, intrinsics.W-1, intrinsics.W)), -1)  # (H, W, 2)
 
-                coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
+                coords = torch.reshape(coords, [-1,2]).cpu()  # (H * W, 2)
                 select_inds = np.random.choice(coords.shape[0], size=[N_rand], replace=False)  # (N_rand,)
                 select_coords = coords[select_inds].long()  # (N_rand, 2)
+                del coords, select_inds
                 rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
                 rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
                 batch_rays = torch.stack([rays_o, rays_d], 0)
+                del rays_o, rays_d
                 target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-        
+                del select_coords
+
         use_random_directions = False
         if 'random_directions_iterations' in cfg:
             use_random_directions = i < cfg['random_directions_iterations']
@@ -997,11 +1012,12 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
             all_ret = render(intrinsics, chunk=cfg['chunk_size'], rays=batch_rays,
                                                     verbose=i < 10, retraw=True, use_random_directions=use_random_directions,
                                                     random_directions=random_directions, **render_kwargs_train)
+            del batch_rays
             if random_directions is not None:
                 all_ret, mean_regularization_term = all_ret                               
             rgb, disp, acc, elapsed_time, extras = all_ret
 
-            img_loss = img2mse(rgb, target_s)
+            img_loss = img2mse(rgb, target_s.to(device))
             trans = extras['raw'][...,-1]
             loss = img_loss
             psnr = mse2psnr(img_loss)
@@ -1065,7 +1081,7 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
             Logger.write(log_str)
             tqdm.write(log_str)
 
-        if i % cfg['checkpoint_interval'] == 0:
+        if i % cfg['checkpoint_interval'] == 0 or psnr.item() > max_psnr:
             torch_rng_state = torch.get_rng_state()
             torch_cuda_rng_state = torch.cuda.get_rng_state()
             numpy_rng_state = np.random.get_state()
@@ -1077,9 +1093,17 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
                 'optimizer_state_dict': optimizer.state_dict(),
                 'torch_rng_state': torch_rng_state,
                 'torch_cuda_rng_state': torch_cuda_rng_state,
-                'numpy_rng_state': numpy_rng_state
+                'numpy_rng_state': numpy_rng_state,
+                'max_psnr': max_psnr,
             }
-            checkpoint_path = log_path + '/checkpoint_{:07d}.pth'.format(i)
+
+            if psnr.item() > max_psnr:
+                max_psnr = psnr.item()
+                Logger.write('New best PSNR: {}'.format(max_psnr))
+                checkpoint_path = log_path + '/checkpoint_best.pth'
+            else:
+                checkpoint_path = log_path + '/checkpoint_{:07d}.pth'.format(i)
+
             torch.save(cp, checkpoint_path)
             Logger.write('Saved checkpoint at {}'.format(checkpoint_path))
             
@@ -1090,6 +1114,8 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
                 exit(RESTART_EXIT_CODE)
                 
         global_step += 1
+
+    Logger.write(f'Final psnr {max_psnr}')
 
 def main():
     torch.set_default_tensor_type('torch.cuda.FloatTensor') # sneaky

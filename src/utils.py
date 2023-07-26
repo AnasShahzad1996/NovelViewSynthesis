@@ -104,7 +104,9 @@ def parse_args_and_init_logger(default_cfg_path=None, parse_render_cfg_path=Fals
             if not key in cfg:
                 cfg[key] = default_cfg[key]
     print(cfg)
-    
+
+    cfg['config_path'] = args.cfg_path
+
     ret_val = (cfg, args.log_path)
     if parse_render_cfg_path:
         ret_val += (args.render_cfg_path,)

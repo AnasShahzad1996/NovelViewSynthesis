@@ -21,6 +21,8 @@ import kilonerf_cuda
 
 import rerun as rr
 
+from skimage.metrics import structural_similarity as calculate_ssim
+
 device = torch.device("cuda")
 
 
@@ -29,6 +31,7 @@ USE_RR = False
 
 
 def get_points_in_occupied_space(points_flat, occupancy_grid, cfg):
+    # print("get_points_in_occupied_space", points_flat.shape)
     global_domain_min, global_domain_max = ConfigManager.get_global_domain_min_and_max(points_flat.device)
     global_domain_size = global_domain_max - global_domain_min
 
@@ -48,8 +51,8 @@ def get_points_in_occupied_space(points_flat, occupancy_grid, cfg):
 
 
 def calculate_network_indices(points_flat, res, num_networks):
-    fixed_resolution = torch.tensor([res, res, res], dtype=torch.long, device=device)
-    network_strides = torch.tensor([res * res, res, 1], dtype=torch.long, device=device)  # assumes row major ordering
+    fixed_resolution = torch.tensor(res, dtype=torch.long, device=points_flat.device)
+    network_strides = torch.tensor([res[2] * res[1], res[2], 1], dtype=torch.long, device=points_flat.device)  # assumes row major ordering
     global_domain_min, global_domain_max = ConfigManager.get_global_domain_min_and_max(device)
     global_domain_size = global_domain_max - global_domain_min
     voxel_size = global_domain_size / fixed_resolution
@@ -81,15 +84,14 @@ def query_multi_network(
     num_samples = points.size(1)
     points_flat = points.view(-1, 3)
 
-    multi_network = networks[freq_index][resolution]["model"]
-    res = [resolution, resolution, resolution]
+    multi_network = networks[freq_index]["model"]
 
-    position_fourier_embedding = networks[freq_index][resolution]["position_fourier_embedding"]
-    direction_fourier_embedding = networks[freq_index][resolution]["direction_fourier_embedding"]
+    position_fourier_embedding = networks[freq_index]["position_fourier_embedding"]
+    direction_fourier_embedding = networks[freq_index]["direction_fourier_embedding"]
 
-    domain_mins = networks[freq_index][resolution]["domain_mins"]
-    domain_maxs = networks[freq_index][resolution]["domain_maxs"]
-    debug_network_color_map = networks[freq_index][resolution]["debug_network_color_map"]
+    domain_mins = networks[freq_index]["domain_mins"]
+    domain_maxs = networks[freq_index]["domain_maxs"]
+    debug_network_color_map = networks[freq_index]["debug_network_color_map"]
 
     num_networks = multi_network.num_networks
 
@@ -125,7 +127,7 @@ def query_multi_network(
     PerfMonitor.add('reorder', ['reorder and backorder'])
 
     num_points_to_process = points_reordered.size(0) if points_reordered.ndim > 0 else 0
-    print("#points to process:", num_points_to_process)
+    # print("#points to process:", num_points_to_process)
     if num_points_to_process == 0:
         return torch.zeros(num_rays, num_samples, 4, dtype=torch.float, device=points_reordered.device)
 
@@ -163,7 +165,7 @@ def query_multi_network(
         batch_size_per_network_list = batch_size_per_network.tolist()
         for network_index in range(multi_network.num_networks):
             # res = iii
-            ind = [(network_index // (res[2] * res[1])), (network_index // res[2]) % res[1], network_index % res[2]]
+            ind = [(network_index // (resolution[2] * resolution[1])), (network_index // resolution[2]) % resolution[1], network_index % resolution[2]]
             start_idx = end_idx
             end_idx += batch_size_per_network_list[network_index]
             use_color_map = True
@@ -222,9 +224,9 @@ def render_rays(
     active_samples_mask = get_points_in_occupied_space(points_flat, occupancy_grid, cfg)
     PerfMonitor.add('get_points_in_occupied_space', ['get_points_in_occupied_space'])
 
-    res = cfg.get("nets_resolution", 16)
+    res = cfg.get("fixed_resolution")
 
-    point_indices, proper_index = calculate_network_indices(points_flat, res, networks[0][res]["model"].num_networks)
+    point_indices, proper_index = calculate_network_indices(points_flat, res, networks[0]["model"].num_networks)
     active_samples_mask = torch.logical_and(active_samples_mask, proper_index)
 
     del proper_index
@@ -233,7 +235,7 @@ def render_rays(
     if cfg.get("use_multifreq", 1):
         squared_distances = torch.sum((points_flat - c2w[:, -1]) ** 2, dim=1)
 
-        ind_far = squared_distances >= 16
+        ind_far = squared_distances >= 5
         ind_near = ~ind_far
 
         del squared_distances
@@ -249,8 +251,8 @@ def render_rays(
         if cfg.get("use_rerun", 0):
             cols = torch.zeros_like(points_flat, dtype=torch.uint8)
 
-            cols[ind_far] = torch.tensor([38, 70, 83], dtype=torch.uint8)
-            cols[ind_near] = torch.tensor([231, 111, 81], dtype=torch.uint8)
+            cols[ind_near] = torch.tensor([38, 70, 83], dtype=torch.uint8)
+            cols[ind_far] = torch.tensor([231, 111, 81], dtype=torch.uint8)
 
             rr.log_points("world/points", points_flat.cpu().numpy(), colors=cols.cpu().numpy())
 
@@ -268,7 +270,7 @@ def render_rays(
         del raw_far
         del raw_near
     else:
-        raw = query_multi_network(networks, pts, viewdirs, cfg, point_indices, distance_mask=active_samples_mask, resolution=res, freq_index=0)
+        raw = query_multi_network(networks, pts, viewdirs, cfg, point_indices, distance_mask=active_samples_mask, resolution=res, freq_index=2)
 
     no_color_sigmoid = has_flag(cfg, 'no_color_sigmoid')
     rgb_map, disp_map, acc_map, weights, depth_map, alpha, transmittance = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, background_color,
@@ -393,6 +395,7 @@ def render_path(networks, render_poses, intrinsics, chunk, occupancy_grid, rende
         rr.log_obb("world/global_domain", half_size=domain_size_half, position=center)
 
     psnr_list = []
+    ssim_list = []
     times_list = []
 
     for i, c2w in enumerate(tqdm(c2ws)):
@@ -428,15 +431,23 @@ def render_path(networks, render_poses, intrinsics, chunk, occupancy_grid, rende
             mse = img2mse(rgb, gt_img_pytorch)
             psnr = mse2psnr(mse)
 
-            psnr_list.append(psnr.item())
+            print(rgb.cpu().numpy().shape, images[i].shape)
 
-            print(i,  mse.item(), psnr.item())
+            ssim = calculate_ssim(rgb.cpu().numpy(), images[i], data_range=images[i].max() - images[i].min(),
+                                  multichannel=True, channel_axis=-1)
+
+            psnr_list.append(psnr.item())
+            ssim_list.append(ssim)
+
+            print(i,  mse.item(), psnr.item(), ssim)
 
         # break
-        if i > 10:
-            break
+        # if i > 10:
+        #     break
     if psnr_list:
         print("Average psnr:", sum(psnr_list) / len(psnr_list))
+    if ssim_list:
+        print("Average psnr:", sum(ssim_list) / len(ssim_list))
     if times_list:
         print("Average time:", sum(times_list) / len(times_list))
 
@@ -487,101 +498,107 @@ def load_networks(finetune_dir: Path, cfg: Dict[str, Any]):
 
     cp_multi = {}
 
-    if cfg.get("use_very_low", 0):
-        freq_pairs = [(cfg['num_frequencies'], cfg['num_frequencies_direction']), (2, 1)]
-    else:
-        freq_pairs = [(cfg['num_frequencies'], cfg['num_frequencies_direction']), (4, 2)]
+    dataset_name = finetune_dir.name
 
-    for freq_i, (num_freq, num_freq_dir) in enumerate(freq_pairs):
-        position_num_input_channels, position_fourier_embedding = create_multi_network_fourier_embedding(1, num_freq)
-        direction_num_input_channels, direction_fourier_embedding = create_multi_network_fourier_embedding(1, num_freq_dir)
+    low_freq_name = f"{dataset_name}_LowFreq"
+    low_freq_small_name = f"{dataset_name}_LowFreq_Small"
+
+    finetune_dir_lf = finetune_dir.parent / low_freq_name
+    finetune_dir_lfs = finetune_dir.parent / low_freq_small_name
+
+    cfg_path = Path(cfg['distilled_cfg_path'])
+    cfg_path_lf = cfg_path.with_name(low_freq_name + ".yaml")
+    cfg_path_lfs = cfg_path.with_name(low_freq_small_name + ".yaml")
+
+    print(cfg_path_lf, cfg_path_lfs)
+
+    cfg_lf = load_yaml_as_dict(cfg_path_lf)
+    cfg_lfs = load_yaml_as_dict(cfg_path_lfs)
+
+    for k, v in cfg_lf['discovery'].items():
+        cfg_lf[k] = v
+
+    for k, v in cfg_lfs['discovery'].items():
+        cfg_lfs[k] = v
+
+    freq_configs = [
+        (finetune_dir, cfg),
+        (finetune_dir_lf, cfg_lf),
+        (finetune_dir_lfs, cfg_lfs),
+    ]
+
+    for freq_i, (base_dir, ecfg) in enumerate(freq_configs):
+        position_num_input_channels, position_fourier_embedding = create_multi_network_fourier_embedding(1, ecfg['num_frequencies'])
+        direction_num_input_channels, direction_fourier_embedding = create_multi_network_fourier_embedding(1, ecfg['num_frequencies_direction'])
 
         cp_multi[freq_i] = {}
 
-        if cfg.get("use_very_low", 0):
+        cfg['direction_layer_size'] = ecfg["direction_layer_size"]
+        cfg['hidden_layer_size'] = ecfg["direction_layer_size"]
+
+        checkpoint_file = base_dir / "checkpoint_best.pth"
+
+        Logger.write(f'Loading {checkpoint_file}')
+
+        res = ecfg['fixed_resolution']
+        network_resolution = torch.tensor(res, dtype=torch.long, device=torch.device('cpu'))
+        num_networks = res[0] * res[1] * res[2]
+
+        Logger.write(f"Creating model with {num_networks} networks ({position_num_input_channels})")
+
+        # TODO: check if multimatmul(_differentiable) needed here as these require kilonerf_cuda to be initialized
+        model = create_multi_network(num_networks, position_num_input_channels, direction_num_input_channels, 4, 'multimatmul_differentiable', cfg).to(device)
+        Logger.write(f"Done creating model with {num_networks} networks")
+
+        network_voxel_size = global_domain_size / network_resolution
+
+        domain_mins = []
+        domain_maxs = []
+        for coord in itertools.product(*[range(r) for r in res]):
+            coord = torch.tensor(coord, device=torch.device('cpu'))
+            domain_min = global_domain_min + network_voxel_size * coord
+            domain_max = domain_min + network_voxel_size
+            domain_mins.append(domain_min.tolist())
+            domain_maxs.append(domain_max.tolist())
+        domain_mins = torch.tensor(domain_mins, device=device)
+        domain_maxs = torch.tensor(domain_maxs, device=device)
+
+        debug_network_color_map = None
+        if has_flag(cfg, 'render_debug_network_color_map'):
+            # debug_network_color_map = torch.tensor([1.0, 0.0, 0.0])
+            debug_network_color_map = torch.tensor([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
             if freq_i == 1:
-                finetune_dir = finetune_dir.with_name(finetune_dir.name + "_Low2")
-                cfg['direction_layer_size'] = 16
-                cfg['hidden_layer_size'] = 16
-            else:
-                cfg['direction_layer_size'] = 32
-                cfg['hidden_layer_size'] = 32
-        else:
-            if freq_i == 1:
-                finetune_dir = finetune_dir.with_name(finetune_dir.name + "_Low")
+                # debug_network_color_map = torch.tensor([0.0, 0.0, 1.0])
+                debug_network_color_map = torch.tensor([[1.0, 0.0, 0.0], [1.0, 1.0, 0.0]])
+            elif freq_i == 2:
+                # debug_network_color_map = torch.tensor([0.0, 1.0, 0.0])
+                debug_network_color_map = torch.tensor([[1.0, 0.0, 0.0], [1.0, 1.0, 0.0]])
 
-        for res_dir in finetune_dir.iterdir():
-            if not res_dir.is_dir():
-                continue
+            # if res == 8:
+            #     debug_network_color_map = torch.tensor([0.0, 1.0, 0.0])
+            # elif res == 4:
+            #     debug_network_color_map = torch.tensor([0.0, 0.0, 1.0])
 
-            checkpoint_filenames = [f for f in res_dir.iterdir() if 'checkpoint' in f.name]
+            # debug_network_color_map = debug_network_color_map.repeat(res[0] * res[1] * res[2], 1)
+            debug_network_color_map = debug_network_color_map.repeat(res[0] * res[1] * res[2] // 2, 1)
+            # debug_network_color_map = torch.cat(channels, dim=-1)
 
-            if not checkpoint_filenames:
-                continue
+            print(debug_network_color_map.shape)
 
-            # checkpoint_file = sorted(checkpoint_filenames)[-1]
-            checkpoint_file = res_dir / "checkpoint_0040000.pth"
+        cp = torch.load(checkpoint_file)
 
-            res = int(res_dir.name)
+        model.load_state_dict(cp['model_state_dict'])
 
-            if res != cfg.get("nets_resolution", 16):
-            # if res not in {4, 8, 16}:
-                continue
-
-            Logger.write(f'Loading {checkpoint_file} for resolution {res}')
-
-            network_resolution = torch.tensor([res, res, res], dtype=torch.long, device=torch.device('cpu'))
-            num_networks = res * res * res
-
-            Logger.write(f"Creating model with {num_networks} networks ({position_num_input_channels})")
-
-            # TODO: check if multimatmul(_differentiable) needed here as these require kilonerf_cuda to be initialized
-            model = create_multi_network(num_networks, position_num_input_channels, direction_num_input_channels, 4, 'multimatmul_differentiable', cfg).to(device)
-            Logger.write(f"Done creating model with {num_networks} networks")
-
-            network_voxel_size = global_domain_size / network_resolution
-
-            domain_mins = []
-            domain_maxs = []
-            for coord in itertools.product(*[range(r) for r in [res, res, res]]):
-                coord = torch.tensor(coord, device=torch.device('cpu'))
-                domain_min = global_domain_min + network_voxel_size * coord
-                domain_max = domain_min + network_voxel_size
-                domain_mins.append(domain_min.tolist())
-                domain_maxs.append(domain_max.tolist())
-            domain_mins = torch.tensor(domain_mins, device=device)
-            domain_maxs = torch.tensor(domain_maxs, device=device)
-
-            debug_network_color_map = None
-            if has_flag(cfg, 'render_debug_network_color_map'):
-                debug_network_color_map = torch.tensor([1.0, 0.0, 0.0])
-
-                if freq_i == 1:
-                    debug_network_color_map = torch.tensor([0.0, 0.0, 1.0])
-
-                # if res == 8:
-                #     debug_network_color_map = torch.tensor([0.0, 1.0, 0.0])
-                # elif res == 4:
-                #     debug_network_color_map = torch.tensor([0.0, 0.0, 1.0])
-
-                debug_network_color_map = debug_network_color_map.repeat(res * res * res, 1)
-                # debug_network_color_map = torch.cat(channels, dim=-1)
-
-                print(debug_network_color_map.shape)
-
-            cp = torch.load(checkpoint_file)
-
-            model.load_state_dict(cp['model_state_dict'])
-
-            cp_multi[freq_i][res] = {
-                "weights": cp,
-                "model": model,
-                "domain_mins": domain_mins,
-                "domain_maxs": domain_maxs,
-                "debug_network_color_map": debug_network_color_map,
-                "position_fourier_embedding": position_fourier_embedding,
-                "direction_fourier_embedding": direction_fourier_embedding,
-            }
+        cp_multi[freq_i] = {
+            "weights": cp,
+            "model": model,
+            "domain_mins": domain_mins,
+            "domain_maxs": domain_maxs,
+            "debug_network_color_map": debug_network_color_map,
+            "position_fourier_embedding": position_fourier_embedding,
+            "direction_fourier_embedding": direction_fourier_embedding,
+        }
 
     return cp_multi
 
@@ -636,9 +653,9 @@ def render_main(log_path: str, render_cfg_path: str, cfg: Dict[str, Any]):
         i_test = i_val
 
     print(i_train.shape, i_val.shape, i_test.shape)
-    # images = images[..., :3]
-    print('Converting alpha to white.')
-    images = images[..., :3] * images[..., -1:] + (1. - images[..., -1:])
+    images = images[..., :3]
+    # print('Converting alpha to white.')
+    # images = images[..., :3] * images[..., -1:] + (1. - images[..., -1:])
 
     background_color = torch.ones(3, dtype=torch.float, device=device)
     # global_domain_min, global_domain_max = ConfigManager.get_global_domain_min_and_max()
@@ -673,10 +690,8 @@ def render_main(log_path: str, render_cfg_path: str, cfg: Dict[str, Any]):
 
     print("Start rendering")
 
-    for network_inner in networks.values():
-        for n in network_inner.values():
-            n["model"].eval()
-
+    for n in networks.values():
+        n["model"].eval()
 
     testsavedir = log_path / f"render_{cfg.get('render_subset', 'unknown')}"
     if render_cfg_path is not None:
