@@ -8,6 +8,7 @@ iterations: 600000
 late_feed_direction: true
 learing_rate_decay_rate: 500
 model_type: single_network
+model_name: instant_ngp
 no_batching: true
 num_frequencies: 10
 num_frequencies_direction: 4

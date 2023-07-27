@@ -99,7 +99,10 @@ def build_occupancy_tree(cfg, log_path):
             domain_maxs = torch.tensor(domain_maxs, device=dev)
     else:
         # Load teacher NeRF model:
-        pretrained_nerf = load_pretrained_nerf_model(dev, cfg)
+        if pretrained_cfg["model_name"] == "instant_ngp":
+            pretrained_instant_ngp = load_pretrained_instant_ngp(dev, cfg)
+        else:
+            pretrained_nerf = load_pretrained_nerf_model(dev, cfg)
     
 
     occupancy_res = cfg['resolution']
@@ -145,9 +148,13 @@ def build_occupancy_tree(cfg, log_path):
                 result = query_multi_network(multi_network, domain_mins, domain_maxs, points_subset, mock_directions_subset,
                     position_fourier_embedding, direction_fourier_embedding, None, None, False, None, pretrained_cfg)[:, :, density_dim]
             else:
-                mock_directions_subset = mock_directions_subset.unsqueeze(1).expand(points_subset.size())
-                points_and_dirs = torch.cat([points_subset.reshape(-1, 3), mock_directions_subset.reshape(-1, 3)], dim=-1)
-                result = pretrained_nerf(points_and_dirs)[:, density_dim].view(actual_batch_size, -1)
+                if pretrained_cfg["model_name"] == "instant_ngp":
+                    mock_directions_subset = mock_directions_subset.unsqueeze(1).expand(points_subset.size())
+                    result = pretrained_instant_ngp(points_subset.reshape(-1, 3), mock_directions_subset.reshape(-1, 3))[0].view(actual_batch_size, -1)
+                else:
+                    mock_directions_subset = mock_directions_subset.unsqueeze(1).expand(points_subset.size())
+                    points_and_dirs = torch.cat([points_subset.reshape(-1, 3), mock_directions_subset.reshape(-1, 3)], dim=-1)
+                    result = pretrained_nerf(points_and_dirs)[:, density_dim].view(actual_batch_size, -1)
             all_densities[start:end] = result.cpu()
     del points, points_subset, mock_directions
     

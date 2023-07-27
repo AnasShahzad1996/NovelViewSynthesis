@@ -2,7 +2,7 @@ import json
 import os
 import signal
 import time
-from collections import deque, defaultdict
+from collections import OrderedDict, deque, defaultdict
 from itertools import product
 import numpy as np
 import argparse
@@ -36,6 +36,20 @@ def load_pretrained_nerf_model(dev, cfg):
     pretrained_nerf.load_state_dict(checkpoint['model_state_dict'])
     pretrained_nerf = run_nerf_helpers.ChainEmbeddingAndModel(pretrained_nerf, embed_fn, embeddirs_fn) # pos. encoding
     return pretrained_nerf
+
+def load_pretrained_instant_ngp(dev, cfg):
+    pretrained_cfg = load_yaml_as_dict(cfg['pretrained_cfg_path'])
+    if 'use_initialization_fix' not in pretrained_cfg:
+        pretrained_cfg['use_initialization_fix'] = False
+    if 'num_importance_samples_per_ray' not in pretrained_cfg:
+        pretrained_cfg['num_importance_samples_per_ray'] = 0
+    rgb_act = 'Sigmoid'
+    pretrained_ngp = NGP(scale=0.5, rgb_act=rgb_act)
+    pretrained_ngp = pretrained_ngp.to(dev)
+    checkpoint = torch.load(cfg['pretrained_checkpoint_path'])
+    checkpoint = OrderedDict((key.replace('model.', ''), value) for key, value in checkpoint.items())
+    pretrained_ngp.load_state_dict(checkpoint)
+    return pretrained_ngp
 
 def create_nerf(cfg):
     embed_fn, input_ch = run_nerf_helpers.get_embedder(cfg['num_frequencies'], 0)
