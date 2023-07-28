@@ -37,7 +37,7 @@ max_error: 100000
 performance_monitoring: false
 model_name: instant_ngp
 pretrained_cfg_path: cfgs/paper/pretrain/Synthetic_NeRF_Lego_Instant_Ngp.yaml
-pretrained_checkpoint_path: logs/paper/pretrain/Synthetic_NeRF_Lego/epoch=29_slim.ckpt
+pretrained_checkpoint_path: logs/paper/pretrain/Synthetic_NeRF_Lego_Instant_Ngp/epoch=29_slim.ckpt
 render_only: true
 restart_after_checkpoint: true
 skip_final: true

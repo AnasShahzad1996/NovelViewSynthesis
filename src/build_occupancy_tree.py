@@ -99,7 +99,6 @@ def build_occupancy_tree(cfg, log_path):
             domain_maxs = torch.tensor(domain_maxs, device=dev)
     else:
         # Load teacher NeRF model:
-        print(pretrained_cfg["model_name"])
         if pretrained_cfg["model_name"] == "instant_ngp":
             pretrained_instant_ngp = load_pretrained_instant_ngp(dev, cfg)
         else:
