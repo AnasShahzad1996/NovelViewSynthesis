@@ -9,7 +9,7 @@ discovery:
   direction_layer_size: 32
   equal_split_metric: mse
   hidden_layer_size: 32
-  iterations: 150000
+  iterations: 1500
   late_feed_direction: true
   max_num_networks: 512
   network_rng_seed: 8078673
@@ -35,7 +35,8 @@ fixed_resolution:
 - 10
 max_error: 100000
 performance_monitoring: false
-pretrained_cfg_path: cfgs/paper/pretrain/Synthetic_NeRF_Lego.yaml
+model_name: instant_ngp
+pretrained_cfg_path: cfgs/paper/pretrain/Synthetic_NeRF_Lego_Instant_Ngp.yaml
 pretrained_checkpoint_path: logs/paper/pretrain/Synthetic_NeRF_Lego/epoch=29_slim.ckpt
 render_only: true
 restart_after_checkpoint: true

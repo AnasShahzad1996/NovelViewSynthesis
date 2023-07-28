@@ -288,7 +288,7 @@ def get_equal_error_split_threshold(test_points, errors, split_axis):
     split_threshold = test_points[points_sort][np.nonzero(np.cumsum(np.cumsum(errors[points_sort]) > half_error_sum) == 1)][0, split_axis]
     return split_threshold
 
-def train_and_test_nodes(node_batch, pretrained_nerf, processing_saturated_nodes, cfg, dev):
+def train_and_test_nodes(node_batch, pretrained_model, processing_saturated_nodes, cfg, dev, model_name):
     num_networks = len(node_batch)
     Logger.write('training {} networks in parallel'.format(num_networks))
     position_num_input_channels, position_fourier_embedding = create_multi_network_fourier_embedding(num_networks, cfg['num_frequencies'])
@@ -328,19 +328,33 @@ def train_and_test_nodes(node_batch, pretrained_nerf, processing_saturated_nodes
         start = 0
         while start < num_points_and_dirs:
             end = min(start + query_batch_size, num_points_and_dirs)
-            raw_output = pretrained_nerf(points_and_dirs[start:end].to(dev)) # Get complete RGBA output from NeRF
-            
-            def process_density(raw_output):
-                if has_flag(cfg, 'convert_density_to_alpha'):
-                    return (1. - torch.exp(-F.relu(raw_output[:, 3]) * cfg['alpha_distance'])).cpu() # Convert to alpha with typical distance encountered during training
-                else:
-                    return F.relu(raw_output[:, 3]).cpu()  # Only apply ReLU to density output
-            
-            if cfg['outputs'] == 'density':
-                all_examples[start:end, 3] = process_density(raw_output)
-            if cfg['outputs'] == 'color_and_density':
-                all_examples[start:end, 6:9] = F.sigmoid(raw_output[:, 0:3]).cpu() # Apply sigmoid to color outputs
-                all_examples[start:end, 9] = process_density(raw_output)
+            if model_name == "instant_ngp":
+                raw_output = pretrained_model(points_and_dirs[start:end, 0:3].to(dev), points_and_dirs[start:end, 3:6].to(dev)) # Get complete RGBA output from NeRF
+                def process_density(raw_output):
+                    if has_flag(cfg, 'convert_density_to_alpha'):
+                        return (1. - torch.exp(-F.relu(raw_output[0]) * cfg['alpha_distance'])).cpu() # Convert to alpha with typical distance encountered during training
+                    else:
+                        return F.relu(raw_output[0]).cpu()  # Only apply ReLU to density output
+                
+                if cfg['outputs'] == 'density':
+                    all_examples[start:end, 3] = process_density(raw_output)
+                if cfg['outputs'] == 'color_and_density':
+                    all_examples[start:end, 6:9] = F.sigmoid(raw_output[1]).cpu() # Apply sigmoid to color outputs
+                    all_examples[start:end, 9] = process_density(raw_output)
+            else:
+                raw_output = pretrained_model(points_and_dirs[start:end].to(dev)) # Get complete RGBA output from NeRF
+                
+                def process_density(raw_output):
+                    if has_flag(cfg, 'convert_density_to_alpha'):
+                        return (1. - torch.exp(-F.relu(raw_output[:, 3]) * cfg['alpha_distance'])).cpu() # Convert to alpha with typical distance encountered during training
+                    else:
+                        return F.relu(raw_output[:, 3]).cpu()  # Only apply ReLU to density output
+                
+                if cfg['outputs'] == 'density':
+                    all_examples[start:end, 3] = process_density(raw_output)
+                if cfg['outputs'] == 'color_and_density':
+                    all_examples[start:end, 6:9] = F.sigmoid(raw_output[:, 0:3]).cpu() # Apply sigmoid to color outputs
+                    all_examples[start:end, 9] = process_density(raw_output)
             if has_flag(cfg, 'use_premultiplied_colors'):
                 all_examples[start:end, 6:9] *= all_examples[start:end, 9]
             del raw_output
@@ -433,8 +447,11 @@ def train(cfg, log_path):
     global_domain_min, global_domain_max = ConfigManager.get_global_domain_min_and_max()
     Logger.write('global_domain_min: {}, global_domain_max: {}'.format(global_domain_min, global_domain_max))
 
-    # Load pretrained NeRF model:
-    pretrained_nerf = load_pretrained_nerf_model(dev, cfg)
+    if cfg["model_name"] == "instant_ngp":
+        pretrained_instant_ngp = load_pretrained_instant_ngp(dev, cfg)
+    else:
+        # Load pretrained NeRF model:
+        pretrained_nerf = load_pretrained_nerf_model(dev, cfg)
     
     # Load checkpoint if exists
     checkpoint_filename = log_path + '/checkpoint.pth'
@@ -495,8 +512,12 @@ def train(cfg, log_path):
             processing_saturated_nodes = True
             node_batch = [cp['saturated_nodes_to_process'].popleft() for _ in range(min(cfg['discovery']['max_num_networks'], len(cp['saturated_nodes_to_process'])))]
         num_networks = len(node_batch)
-        multi_network, test_points, errors_per_point, best_errors_per_network, best_errors_per_network_color, best_errors_per_network_density, saturation =\
-            train_and_test_nodes(node_batch, pretrained_nerf, processing_saturated_nodes, cfg['discovery'], dev)
+        if cfg['model_name'] == "instant_ngp":
+            multi_network, test_points, errors_per_point, best_errors_per_network, best_errors_per_network_color, best_errors_per_network_density, saturation =\
+                train_and_test_nodes(node_batch, pretrained_instant_ngp, processing_saturated_nodes, cfg['discovery'], dev, cfg['model_name'])
+        else:
+            multi_network, test_points, errors_per_point, best_errors_per_network, best_errors_per_network_color, best_errors_per_network_density, saturation =\
+                train_and_test_nodes(node_batch, pretrained_nerf, processing_saturated_nodes, cfg['discovery'], dev, cfg['model_name'])
         num_networks_below_threshold = 0
         for network_index in range(num_networks):
             split_further = not has_flag(cfg, 'stop_after_one_iteration')
@@ -519,15 +540,15 @@ def train(cfg, log_path):
                     node_batch[network_index].split_axis = split_axis
                     
                     if cfg['tree_type'] == 'kdtree_equal_error_split':
-            	        node_batch[network_index].split_threshold = get_equal_error_split_threshold(
-            	            test_points[network_index],
-            			    errors_per_point[cfg['discovery']['equal_split_metric']][network_index],
-            			    node_batch[network_index].split_axis)
+                        node_batch[network_index].split_threshold = get_equal_error_split_threshold(
+                        test_points[network_index],
+                        errors_per_point[cfg['discovery']['equal_split_metric']][network_index],
+                        node_batch[network_index].split_axis)
 
                     if cfg['tree_type'] == 'kdtree_random' or cfg['tree_type'] == 'kdtree_longest':
-                    	domain_min_coord = node_batch[network_index].domain_min[node_batch[network_index].split_axis]
-                    	domain_max_coord = node_batch[network_index].domain_max[node_batch[network_index].split_axis]
-                    	node_batch[network_index].split_threshold = domain_min_coord + (domain_max_coord - domain_min_coord) / 2
+                        domain_min_coord = node_batch[network_index].domain_min[node_batch[network_index].split_axis]
+                        domain_max_coord = node_batch[network_index].domain_max[node_batch[network_index].split_axis]
+                        node_batch[network_index].split_threshold = domain_min_coord + (domain_max_coord - domain_min_coord) / 2
                     
                     node_batch[network_index].leq_child = Node()
                     node_batch[network_index].gt_child = Node()
