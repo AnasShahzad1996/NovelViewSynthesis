@@ -1,7 +1,10 @@
-DATASET=Synthetic_NeRF_Lego_Instant_Ngp
+DATASET=Synthetic_NeRF_Lego_Norm
+# Define dataset_path and run scaling operation required for instant ngp
+
+# python scale_for_ingp.py $dataset_path
 
 # Training Instant Ngp as teacher model
-#time python run_nerf.py cfgs/paper/pretrain/$DATASET.yaml
+# Trained using ngp_pl github repository and loading the saved checkpoint
 
 # Extracting occupancy grid from teacher model
 python build_occupancy_tree.py cfgs/paper/pretrain_occupancy/$DATASET.yaml
