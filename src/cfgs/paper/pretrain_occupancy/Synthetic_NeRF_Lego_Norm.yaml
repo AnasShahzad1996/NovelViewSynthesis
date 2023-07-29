@@ -1,0 +1,14 @@
+dataset_dir: data/nsvf/Synthetic_NeRF/Lego_norm
+dataset_type: nsvf
+pretrained_cfg_path: cfgs/paper/pretrain/Synthetic_NeRF_Lego_Norm.yaml
+pretrained_checkpoint_path: logs/paper/pretrain/Synthetic_NeRF_Lego_Norm/epoch=29_slim.ckpt
+resolution:
+- 256
+- 256
+- 256
+subsample_resolution:
+- 3
+- 3
+- 3
+threshold: 10
+voxel_batch_size: 16384
