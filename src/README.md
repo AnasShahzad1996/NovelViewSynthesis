@@ -34,6 +34,11 @@ use the provided `unzip` argument to avoid overwriting our bounding boxes.
 
 ## Usage
 
+```
+python multiscale_render.py cfgs/paper/finetune/Synthetic_NeRF_Lego_UV_Norm.yaml -rcfg cfgs/render/benchmark_multi.yaml
+```
+
+
 To benchmark a trained model run:  
 `bash benchmark.sh`
 
