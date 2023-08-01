@@ -1,81 +1,23 @@
 
-# KiloNeRF: Speeding up Neural Radiance Fields with Thousands of Tiny MLPs
-
-Check out the paper on arXiv: https://arxiv.org/abs/2103.13744
-
-![KiloNeRF interactive demo](interactive-viewer.gif)
-
-This repo contains the code for KiloNeRF, together with instructions on how to download pretrained models and datasets.
-Additionally, we provide a viewer for **interactive visualization** of KiloNeRF scenes. We further improved the implementation and KiloNeRF now runs **~5 times faster** than the numbers we report in the first arXiv version of the paper. As a consequence the Lego scene can now be rendered at around 50 FPS.
-
-## Prerequisites
-* OS: Ubuntu 20.04.2 LTS
-* GPU: >= NVIDIA GTX 1080 Ti with >= 460.73.01 driver
-* Python package manager `conda`
-
-## Setup
+# KiloNeRF
 
 Open a terminal in the root directory of this repo and execute 
-`export KILONERF_HOME=$PWD`
-
-Install OpenGL and GLUT development files  
-```sudo apt install libgl-dev freeglut3-dev```
-
-Install Python packages  
-```conda env create -f $KILONERF_HOME/environment.yml```
-
-Activate `kilonerf` environment  
-```source activate kilonerf```
-
-### CUDA extension installation
-You can either install our pre-compiled CUDA extension or compile the extension
-yourself. Only compiling it yourself will allow you to make changes to
-the CUDA code but is more tedious.
-
-#### Option A: Install pre-compiled CUDA extension 
-
-Install pre-compiled CUDA extension  
-```pip install $KILONERF_HOME/cuda/dist/kilonerf_cuda-0.0.0-cp38-cp38-linux_x86_64.whl```
-
-#### Option B: Build CUDA extension yourself
-Install CUDA development kit and restart your bash:  
 ```
-wget https://developer.download.nvidia.com/compute/cuda/11.1.1/local_installers/cuda_11.1.1_455.32.00_linux.run
-sudo sh cuda_11.1.1_455.32.00_linux.run
-echo -e "\nexport PATH=\"/usr/local/cuda/bin:\$PATH\"" >> ~/.bashrc
-echo "export LD_LIBRARY_PATH=\"/usr/local/cuda/lib64:\$LD_LIBRARY_PATH\"" >> ~/.bashrc
-```
-
-Download magma from http://icl.utk.edu/projectsfiles/magma/downloads/magma-2.5.4.tar.gz then build and install to  `/usr/local/magma`
-```
-sudo apt install gfortran libopenblas-dev
-wget http://icl.utk.edu/projectsfiles/magma/downloads/magma-2.5.4.tar.gz
-tar -zxvf magma-2.5.4.tar.gz
-cd magma-2.5.4
-cp make.inc-examples/make.inc.openblas make.inc
-export GPU_TARGET="Maxwell Pascal Volta Turing Ampere"
-export CUDADIR=/usr/local/cuda
-export OPENBLASDIR="/usr"
-make
-sudo -E make install prefix=/usr/local/magma
-```
-For further information on installing magma see: http://icl.cs.utk.edu/projectsfiles/magma/doxygen/installing.html
-
-Finally compile KiloNeRF's C++/CUDA code 
-```
-cd $KILONERF_HOME/cuda
-python setup.py develop
+python3.8 -m venv venv_combined
+source venv_combined/bin/activate
+export LD_LIBRARY_PATH="/usr/local/cuda-11.6/lib64:$LD_LIBRARY_PATH"
+export PATH="/usr/local/cuda-11.6/bin:$PATH"
+python -m pip install -U pip wheel setuptools packaging ninja
+python -m pip install torchmetrics==0.11.4 torch==1.13.1+cu116 torchvision==0.14.1+cu116 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu116
+python -m pip install torch-scatter -f https://data.pyg.org/whl/torch-1.13.0+cu116.html
+python -m pip install -v git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+python -m pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings "--build-option=--cpp_ext" --config-settings "--build-option=--cuda_ext" git+https://github.com/NVIDIA/apex
+python -m pip install scikit-image scipy tqdm imageio pyyaml imageio-ffmpeg lpips ConfigArgParse pandas pyrtools pyvista rerun-sdk einops==0.4.1 kornia==0.6.5 pytorch-lightning==1.7.7 matplotlib==3.5.2 opencv-python==4.6.0.66 'ptflops<=0.6.7' jupyter pymcubes trimesh dearpygui
+python -m pip install cuda/dist/kilonerf_cuda-0.0.0-cp38-cp38-linux_x86_64.whl
 ```
 
 ### Download pretrained models
-We provide pretrained KiloNeRF models for the following scenes: Synthetic_NeRF_Chair, Synthetic_NeRF_Lego, Synthetic_NeRF_Ship, Synthetic_NSVF_Palace, Synthetic_NSVF_Robot
-```
-cd $KILONERF_HOME
-mkdir logs
-cd logs
-wget https://www.dropbox.com/s/eqvf3x23qbubr9p/kilonerf-pretrained.tar.gz?dl=1 --output-document=paper.tar.gz
-tar -xf paper.tar.gz
-```
+https://www.dropbox.com/sh/tgolvg5h54sdguq/AABZRKkly9PEM9JVubXLPptya?dl=0
 
 ### Download NSVF datasets
 Credit to NSVF authors for providing their datasets: https://github.com/facebookresearch/NSVF
