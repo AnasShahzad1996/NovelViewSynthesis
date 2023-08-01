@@ -214,6 +214,7 @@ def render_path(render_poses, intrinsics, chunk, render_kwargs, gt_imgs=None, sa
     for i, c2w in enumerate(tqdm(c2ws)):
         log_str = 'Rendered image: {:2d}/{} '.format(i + 1, len(render_poses))
 
+        c2w.to(device)
         if use_fast_sampling:
             fast_kilonerf_renderer.set_camera_pose(c2w)
             rgb, elapsed_time = fast_kilonerf_renderer.render()
@@ -622,7 +623,7 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
         i_render = i_test2
     if 'render_subset_indices' in cfg:
         i_render = i_render[cfg['render_subset_indices']]
-    if render_subset != 'custom_path':
+    if render_subset != 'custom_path'and i_render:
         render_poses = np.array(poses[i_render]) 
             
     # Checkpoint loading
@@ -790,7 +791,11 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
         debug_network_color_map = None    
         if has_flag(cfg, 'render_debug_network_color_map'):
             #debug_network_color_map = torch.rand(multi_network.num_networks, 3)
-            debug_network_color_map = torch.rand(res + [3])
+
+            debug_network_color_map = torch.tensor([[1.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
+            debug_network_color_map = debug_network_color_map.repeat(res[0] * res[1] * res[2] // 2, 1)
+
+            # debug_network_color_map = torch.rand(res + [3])
             # for x, y, z in itertools.product(*[range(i) for i in res]):
             #     color = [0.0, 1.0, 0.] if (x + ((y + z % 2) % 2)) % 2 else [0.0, 0.0, 1.0]
             #     # debug_network_color_map[x, y, z] = torch.tensor(color, dtype=torch.float)
@@ -899,7 +904,7 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
 
     # Move training data to GPU
 
-    gpu_slit = cfg.get('gpu_training_split', len(i_train) + 1)
+    gpu_slit = cfg.get('gpu_training_split', len(i_train))
     images_gpu = torch.tensor(images[:gpu_slit, ], dtype=torch.float32, device=device)
     images_cpu = torch.tensor(images[gpu_slit:, ], dtype=torch.float32, device=device_cpu)
     del images
@@ -917,6 +922,7 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
     print('TRAIN views are', i_train)
     print('TEST views are', i_test)
     print('VAL views are', i_val)
+    # print(images_cpu.shape, poses.shape, images.device, poses.device)
 
     # Load rng_state from checkpoints to avoid repeating sampling pattern (could be a big problem when checkpointing frequently)
     if has_flag(cfg, 'rng_seed_fix') and load_from_checkpoint and 'torch_rng_state' in cp:
@@ -924,7 +930,7 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
         torch.set_rng_state(cp['torch_rng_state'])
         torch.cuda.set_rng_state(cp['torch_cuda_rng_state'])
         np.random.set_state(cp['numpy_rng_state'])
-    
+
     start = start + 1
     for i in trange(start, N_iters):
         model.train()
@@ -1069,7 +1075,14 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
             print('test poses shape', poses[i_test].shape)
             model.eval()
             with torch.no_grad():
-                render_path(torch.Tensor(poses[i_test]).to(device), intrinsics, cfg['chunk_size'], render_kwargs_test, gt_imgs=images[i_test], savedir=testsavedir)
+                render_path(
+                    poses[i_test],
+                    intrinsics,
+                    cfg['chunk_size'],
+                    render_kwargs_test,
+                    gt_imgs=images_cpu[i_test - gpu_slit],
+                    savedir=testsavedir
+                )
             Logger.write('Saved test set')
 
         if i % cfg['print_interval'] == 0 and not do_constant_pretraining:
@@ -1112,7 +1125,7 @@ def train(cfg, log_path, render_cfg_path, resolution_overwrite=None):
             if running_on_mpi_cluster:
                 Logger.write('Restarting job.')
                 exit(RESTART_EXIT_CODE)
-                
+
         global_step += 1
 
     Logger.write(f'Final psnr {max_psnr}')

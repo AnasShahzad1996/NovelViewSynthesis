@@ -1,4 +1,4 @@
-DATASET=Synthetic_NeRF_Lego_MultiRes_Low
+DATASET=Synthetic_NeRF_Lego_MultiRes_Low2
 
 # Training a Vanilla NeRF as teacher model
 #time python run_nerf.py cfgs/paper/pretrain/$DATASET.yaml

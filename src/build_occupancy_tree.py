@@ -130,12 +130,12 @@ def build_occupancy_tree(cfg, log_path):
     mock_directions = torch.empty(min(cfg['voxel_batch_size'], total_num_voxels), 3).to(dev)
 
     # We query in a fixed grid at a higher resolution than the occupancy grid resolution to detect fine structures.
-    all_densities = torch.empty(total_num_voxels, num_samples_per_voxel)
+    all_densities = torch.empty(total_num_voxels, num_samples_per_voxel, device=torch.device('cpu'))
     end = 0
     while end < total_num_voxels:
         print('sampling network: {}/{} ({:.4f}%)'.format(end, total_num_voxels, 100 * end / total_num_voxels))
         start = end
-        end =  min(start + cfg['voxel_batch_size'], total_num_voxels)
+        end = min(start + cfg['voxel_batch_size'], total_num_voxels)
         actual_batch_size = end - start
         points_subset = points[start:end].to(dev).contiguous() # voxel_batch_size x num_samples_per_voxel x 3
         mock_directions_subset = mock_directions[:actual_batch_size]
@@ -151,7 +151,7 @@ def build_occupancy_tree(cfg, log_path):
             all_densities[start:end] = result.cpu()
     del points, points_subset, mock_directions
     
-    occupancy_grid = all_densities.to(dev) > cfg['threshold']
+    occupancy_grid = all_densities > cfg['threshold']
     del all_densities
     occupancy_grid = occupancy_grid.view(cfg['resolution'] + [-1])
 
