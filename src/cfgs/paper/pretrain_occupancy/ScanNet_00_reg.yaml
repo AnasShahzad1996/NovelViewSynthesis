@@ -1,0 +1,14 @@
+dataset_dir: data/nsvf/Synthetic_NeRF/ScanNet/scene0000_00_real
+dataset_type: nsvf
+pretrained_cfg_path: cfgs/paper/pretrain/ScanNet_00_reg.yaml
+pretrained_checkpoint_path: logs/paper/pretrain/scene0000_00_real/checkpoint_0600000.pth
+resolution:
+- 144
+- 256
+- 160
+subsample_resolution:
+- 3
+- 3
+- 3
+threshold: 10
+voxel_batch_size: 16384
