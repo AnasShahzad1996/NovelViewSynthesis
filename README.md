@@ -1,1 +1,0 @@
-# Novel View Synthesis
